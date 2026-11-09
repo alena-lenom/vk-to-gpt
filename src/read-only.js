@@ -77,7 +77,7 @@ const CALLS = Object.freeze({
     if (!/^\d+(,\d+)*$/.test(user_ids)) throw new Error('Invalid user_ids');
     return ['users.get', { user_ids }];
   },
-  vk_groups_get_by_id: (a) => ['groups.getById', { group_id: integer(a.group_id, 'group_id', 1, 2147483647) }],
+  vk_groups_get_by_id: (a) => ['groups.getById', { group_ids: String(integer(a.group_id, 'group_id', 1, 2147483647)) }],
   vk_stats_get: (a) => {
     const from = optional(a, 'timestamp_from', 0, 4102444800);
     const to = optional(a, 'timestamp_to', 0, 4102444800);
