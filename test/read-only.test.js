@@ -22,6 +22,9 @@ test('parameters cannot override VK credentials or invoke extra methods', () => 
   assert.throws(() => resolveTool('vk_stats_get', { group_id: 2, timestamp_from: 20, timestamp_to: 10 }), /period/);
   assert.throws(() => resolveTool('vk_wall_get', { owner_id: '-1' }), /Invalid owner_id/);
   assert.throws(() => resolveTool('vk_wall_get_by_id', { posts: '1_2;wall.post' }), /Invalid posts/);
+  assert.deepEqual(resolveTool('vk_groups_get_by_id', { group_id: 23 }), {
+    method: 'groups.getById', params: { group_ids: '23' },
+  });
   assert.deepEqual(resolveTool('vk_post_reach', { group_id: 23, post_ids: '4,5' }), {
     method: 'stats.getPostReach', params: { owner_id: -23, post_ids: '4,5' },
   });
