@@ -1,0 +1,32 @@
+# Dependencies and build artifacts
+node_modules/
+dist/
+build/
+coverage/
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.token
+secrets/
+.secrets/
+
+# Local runtime/data
+*.sqlite
+*.sqlite3
+*.db
+logs/
+*.log
+
+# Editor/OS
+.DS_Store
+.idea/
+.vscode/
