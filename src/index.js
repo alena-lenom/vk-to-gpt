@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Adapted from bulatko/vk-mcp-server (MIT). See THIRD_PARTY_NOTICES.md.
 import { Server } from '@modelcontextprotocol/server';
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { VkClient } from './vk-client.js';
 import { TOOLS, callTool } from './read-only.js';
@@ -21,6 +23,6 @@ export function buildServer(client = new VkClient()) {
   return server;
 }
 
-if (process.argv[1] && import.meta.url === new URL('file://' + process.argv[1]).href) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   serveStdio(buildServer);
 }
