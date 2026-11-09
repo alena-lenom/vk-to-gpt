@@ -56,7 +56,7 @@ export class VkClient {
         continue;
       }
       // Never expose VK response request_params (may contain the access token).
-      throw new Error('VK API error ' + code + ': ' + String(payload.error.error_msg || 'request failed').slice(0, 180));
+      throw new Error('VK API error ' + code + ' (method unavailable, denied, or failed)');
     }
     throw new Error('VK API retry limit exceeded');
   }
