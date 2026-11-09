@@ -1,0 +1,40 @@
+name: PHP remote MCP
+on:
+  push:
+    paths:
+      - "composer.json"
+      - "php/**"
+      - "public/**"
+      - "test/php/**"
+      - ".github/workflows/php-mcp.yml"
+  pull_request:
+    paths:
+      - "composer.json"
+      - "php/**"
+      - "public/**"
+      - "test/php/**"
+      - ".github/workflows/php-mcp.yml"
+permissions:
+  contents: read
+jobs:
+  php-mcp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          tools: composer:v2
+          extensions: curl, fileinfo, json, openssl
+          coverage: none
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: composer validate --no-check-publish
+      - run: composer install --no-interaction --prefer-dist
+      - run: composer check-platform-reqs
+      - run: composer audit --locked --no-interaction
+      - run: composer test
+      - run: node test/php/contract.mjs
+      - run: python3 -B test/php/smoke_http.py

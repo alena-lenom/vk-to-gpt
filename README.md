@@ -2,7 +2,7 @@
 
 Read-only integration of VK (VKontakte) with ChatGPT through a secured remote Model Context Protocol (MCP) server.
 
-**Status:** Minimal local read-only MCP prototype committed; no deployed HTTPS endpoint, verified VK credentials, or ChatGPT end-to-end connection yet.
+**Status:** Node stdio prototype plus a PHP 8.4 Streamable HTTP implementation. Not deployed. Node and PHP policy/client tests pass locally; SDK installation and HTTP discovery remain unverified because of local network and socket restrictions. No real VK credentials or ChatGPT end-to-end connection verified.
 
 ## Goal
 
@@ -47,7 +47,36 @@ Use `VK_SERVICE_KEY` for permitted public VK reads and optionally `VK_USER_TOKEN
 
 This prototype is **stdio-only** and is not a ChatGPT remote connector. No public HTTPS listener or OAuth callback is configured. Do not expose stdio through an unauthenticated HTTP bridge.
 
-The repository has a `node --test` suite covering blocked methods, injected parameters, API token precedence, pagination parameters and retry logic. Running and verifying the full Node suite remains a separate validation step; a committed test file is not evidence of passing CI.
+Local validation on macOS: `npm test` passed all 6 Node tests. The Node stdio implementation is unchanged.
+
+## PHP HTTP endpoint (REG.RU Host 0 target; not deployed)
+
+`public/mcp.php` uses the official experimental [mcp/sdk](https://github.com/modelcontextprotocol/php-sdk) (Apache-2.0), with `nyholm/psr7` as its PSR-7/17 implementation. There is no application framework or custom MCP protocol implementation. `php/tools.json` mirrors the existing seven-tool Node discovery contract; the parity test detects drift. Runtime validation and a separate VK API boundary allowlist enforce the same mappings, defaults, ranges, token precedence, API version 5.199, and four-attempt code-6 retry behavior. Unexpected transport/SDK errors are redacted. Tool calls never accept credentials.
+
+Requirements: PHP 8.4, Composer 2, cURL/JSON/OpenSSL support, and a private writable session directory outside the web document root (mode 0700). File sessions survive separate PHP requests and expire after ten minutes. Provision these server-side environment variables using private hosting configuration, never query parameters or public files:
+
+- `MCP_BEARER_TOKEN`: a strong random bearer secret using RFC 6750 characters. Absent, empty, malformed or nonmatching tokens fail closed with HTTP 401, before SDK loading. Send it only in `Authorization: Bearer …`.
+- `MCP_ALLOWED_HOST`: exact hostname without scheme or port; defaults to `localhost`. No wildcard hosts, forwarded-header trust or browser Origin requests are accepted.
+- `MCP_SESSION_DIR`: existing private session directory, dedicated to this endpoint. Keep it outside the document root and inaccessible to other hosting users.
+- `VK_SERVICE_KEY` and optionally `VK_USER_TOKEN`: server-side VK credentials with permitted read access. Statistics always require the user token.
+
+Install and validate locally:
+
+```sh
+composer install --no-interaction --prefer-dist
+composer test
+node test/php/contract.mjs
+npm test
+python3 -B test/php/smoke_http.py
+```
+
+The smoke test starts and stops temporary PHP HTTP listeners with isolated environments, fake MCP secrets and no VK credentials. It checks absent/malformed server configuration, missing/wrong request tokens, the MCP handshake and seven-tool `tools/list`. PHP tests mock VK HTTP responses; no real VK request is needed. For a manual listener, configure the variables above and run `php -S localhost:8080 -t public`; use `/mcp.php`. The built-in server is for local testing only.
+
+**Confirmed locally:** PHP 8.4.27 lint passed; `php test/php/run.php` passed 47 checks (validation, allowlists, credential/version override protection, token selection, retries and redaction); the Node/PHP schema parity check passed; all 6 existing Node tests passed. `composer validate --no-check-publish` passed with a missing project-license metadata warning. These checks do not exercise the SDK.
+
+**Still unverified locally:** Composer cannot reach Packagist (configured proxy connection fails; without proxy DNS resolution fails), so dependencies are not installed and no `composer.lock` could be generated. The HTTP smoke test cannot bind loopback sockets in this sandbox (`Operation not permitted`). Neither HTTP 401 nor SDK `tools/list` is claimed as observed. Complete installation, generate and review/commit the lockfile, run `composer check-platform-reqs`, `composer audit`, and rerun the smoke test before deployment. The experimental SDK integration must pass that gate.
+
+**Production requirements remaining:** verify REG.RU Host 0 actually supports PHP 8.4 and the resolved dependencies, outbound verified HTTPS to VK, private environment configuration and session storage, and PHP execution limits sufficient for VK timeouts/retries. Serve only `public/` as the document root over HTTPS with a valid certificate; keep `vendor/`, source, Git, environment and session files outside it. Confirm Apache/FastCGI passes Authorization and MCP headers, request-size/time limits, session continuity across workers, and SDK responses through hosting buffering. Add hosting-level request/rate limits and disable PHP error display. Validate HTTPS unauthorized rejection, Host/Origin rejection, initialize, discovery and mocked read failures on the intended runtime. Static bearer authentication is not an OAuth implementation; confirm the intended MCP client's authentication support separately. Actual lawful VK access and ChatGPT end-to-end use remain separate acceptance checks. No REG.RU connection or deployment has been performed.
 
 ## Roadmap
 

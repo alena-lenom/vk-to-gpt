@@ -1,0 +1,14 @@
+{
+  "name": "lenom/vk-to-gpt",
+  "description": "Read-only VK MCP HTTP endpoint",
+  "type": "project",
+  "require": {
+    "php": "~8.4.0",
+    "ext-curl": "*",
+    "ext-json": "*",
+    "mcp/sdk": "0.9.0",
+    "nyholm/psr7": "^1.8"
+  },
+  "scripts": { "test": "php test/php/run.php" },
+  "config": { "allow-plugins": false, "sort-packages": true }
+}

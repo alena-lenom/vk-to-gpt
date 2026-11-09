@@ -1,0 +1,169 @@
+[
+  {
+    "name": "vk_wall_get",
+    "description": "Read public wall posts; community owner_id is negative",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "owner_id": {
+          "type": "integer"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "filter": {
+          "type": "string",
+          "enum": [
+            "all",
+            "owner",
+            "others"
+          ]
+        }
+      },
+      "required": [
+        "owner_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "vk_wall_get_by_id",
+    "description": "Read specified wall posts by IDs",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "posts": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "posts"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "vk_wall_get_comments",
+    "description": "Read comments on a wall post",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "owner_id": {
+          "type": "integer"
+        },
+        "post_id": {
+          "type": "integer"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "owner_id",
+        "post_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "vk_users_get",
+    "description": "Read public VK user profile fields",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "user_ids": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "user_ids"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "vk_groups_get_by_id",
+    "description": "Read VK community information",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "group_id": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "group_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "vk_stats_get",
+    "description": "Read available community statistics (may be unavailable for your token)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "group_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp_from": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timestamp_to": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "interval": {
+          "type": "string",
+          "enum": [
+            "day",
+            "week",
+            "month",
+            "year",
+            "all"
+          ]
+        }
+      },
+      "required": [
+        "group_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "vk_post_reach",
+    "description": "Read available reach for specified community posts (token dependent)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "group_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "post_ids": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "group_id",
+        "post_ids"
+      ],
+      "additionalProperties": false
+    }
+  }
+]
