@@ -2,7 +2,7 @@
 
 Read-only integration of VK (VKontakte) with ChatGPT through a secured remote Model Context Protocol (MCP) server.
 
-**Status:** Discovery / pre-development. There is no deployed MCP endpoint, confirmed VK API authorization, or ChatGPT end-to-end connection yet.
+**Status:** Minimal local read-only MCP prototype committed; no deployed HTTPS endpoint, verified VK credentials, or ChatGPT end-to-end connection yet.
 
 ## Goal
 
@@ -28,7 +28,26 @@ The implementation follows **REUSE -> ADAPT -> IMPLEMENT**: choose one proven up
 - [theYahia/vk-mcp](https://github.com/theYahia/vk-mcp) — transport alternative.
 - [ilyautov/vk-mcp-ru](https://github.com/ilyautov/vk-mcp-ru) — VK API coverage reference.
 
-Donor forks are held separately at [alena-Lenom-fork](https://github.com/alena-Lenom-fork). No third-party code has been imported into this repository yet. Review each donor's license and preserve required notices before reuse.
+Donor forks are held separately at [alena-Lenom-fork](https://github.com/alena-Lenom-fork). The first adapter is adapted from bulatko/vk-mcp-server patterns. Its MIT notice is preserved in [third_party/bulatko-LICENSE](third_party/bulatko-LICENSE); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Do not interpret this as evidence that the upstream server is already deployed.
+
+
+## Current local prototype
+
+The prototype uses the upstream MCP server library and provides **seven read-only tools**: `vk_wall_get`, `vk_wall_get_by_id`, `vk_wall_get_comments`, `vk_users_get`, `vk_groups_get_by_id`, `vk_stats_get`, and `vk_post_reach`. A second VK API method allowlist blocks all write methods even when bypassing the MCP tool registry. VK errors are returned by numeric code only to avoid leaking request payloads.
+
+Requirements: Node.js 20+.
+
+```sh
+npm install
+npm test
+npm start
+```
+
+Use `VK_SERVICE_KEY` for permitted public VK reads and optionally `VK_USER_TOKEN` for statistics if it is lawfully issued with sufficient permissions. Store tokens in a private environment/secret store, not in tracked files or command history. `.env.example` documents variable names only. Statistics are **not confirmed available** with newly issued VK ID credentials.
+
+This prototype is **stdio-only** and is not a ChatGPT remote connector. No public HTTPS listener or OAuth callback is configured. Do not expose stdio through an unauthenticated HTTP bridge.
+
+The repository has a `node --test` suite covering blocked methods, injected parameters, API token precedence, pagination parameters and retry logic. Running and verifying the full Node suite remains a separate validation step; a committed test file is not evidence of passing CI.
 
 ## Roadmap
 
