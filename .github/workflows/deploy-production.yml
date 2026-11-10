@@ -1,0 +1,46 @@
+name: Deploy production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          test -n "$SSH_KEY"
+          test -n "$KNOWN_HOSTS"
+          install -d -m 700 ~/.ssh
+          printf '%s\\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Deploy on production
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+          PROD_PATH: ${{ vars.PROD_PATH }}
+          DEPLOY_BRANCH: main
+        run: |
+          set -eu
+          test -n "$PROD_HOST"
+          test -n "$PROD_USER"
+          test -n "$PROD_PATH"
+          case "$PROD_PATH" in /*) ;; *) echo "PROD_PATH must be absolute" >&2; exit 1 ;; esac
+          case "$PROD_PATH" in *[!A-Za-z0-9_./-]*) echo "PROD_PATH contains unsupported characters" >&2; exit 1 ;; esac
+          ssh "$PROD_USER@$PROD_HOST" "cd '$PROD_PATH' && git fetch origin '$DEPLOY_BRANCH' && git reset --hard 'origin/$DEPLOY_BRANCH' && sh deploy-production.sh"
