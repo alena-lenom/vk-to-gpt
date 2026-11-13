@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 3
     environment: production
     steps:
-      - name: Configure SSH
+      - name: Configure temporary SSH files
         env:
           SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
@@ -31,26 +31,33 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: Inspect hosting without changing it
+      - name: Diagnose host-key pin without printing secrets
         env:
           PROD_HOST: ${{ secrets.PROD_HOST }}
-          PROD_USER: ${{ secrets.PROD_USER }}
         run: |
-          set -eu
+          set -euo pipefail
           test -n "$PROD_HOST"
-          test -n "$PROD_USER"
-          ssh -i "$HOME/.ssh/id_ed25519" \
-            -o IdentitiesOnly=yes \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes \
-            "$PROD_USER@$PROD_HOST" 'sh -s' <<'REMOTE'
-          set -eu
-          printf 'ssh=ok\n'
-          if command -v git >/dev/null 2>&1; then git --version; else printf 'git=missing\n'; fi
-          if command -v php >/dev/null 2>&1; then php -r 'printf("php_cli=%s\n", PHP_VERSION);'; else printf 'php_cli=missing\n'; fi
-          if command -v composer >/dev/null 2>&1; then printf 'composer=present\n'; else printf 'composer=missing\n'; fi
-          site_root="$HOME/data/www/vk.tattoomystery.ru"
-          if [ -d "$site_root" ]; then printf 'site_root=present\n'; else printf 'site_root=missing\n'; fi
-          if [ -f "$site_root/index.html" ]; then printf 'index_html=present\n'; else printf 'index_html=missing\n'; fi
-          if [ -d "$site_root/.git" ]; then printf 'webroot_git=present\n'; else printf 'webroot_git=absent\n'; fi
-          REMOTE
+          if ssh-keygen -y -P "" -f "$HOME/.ssh/id_ed25519" >/dev/null 2>&1; then
+            echo "private_key_format=valid"
+          else
+            echo "private_key_format=invalid"
+            exit 1
+          fi
+          if ssh-keygen -lf "$HOME/.ssh/known_hosts" > "$RUNNER_TEMP/known-host-fingerprints" 2>/dev/null; then
+            echo "known_hosts_format=valid"
+            awk '{print "pinned_host_key=" $2 " " $NF}' "$RUNNER_TEMP/known-host-fingerprints"
+          else
+            echo "known_hosts_format=invalid"
+            exit 1
+          fi
+          if ssh-keygen -F "$PROD_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null 2>&1; then
+            echo "target_host_has_pin=yes"
+          else
+            echo "target_host_has_pin=no"
+          fi
+          scan="$RUNNER_TEMP/scanned-host-key"
+          if ssh-keyscan -T 5 -t ed25519 "$PROD_HOST" 2>/dev/null > "$scan" && test -s "$scan"; then
+            ssh-keygen -lf "$scan" | awk '{print "observed_host_key=" $2 " " $NF}'
+          else
+            echo "observed_host_key=unavailable"
+          fi
