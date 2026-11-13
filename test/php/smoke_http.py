@@ -66,9 +66,12 @@ with tempfile.TemporaryDirectory(prefix='vk-mcp-') as sessions:
                 body = next(line[5:].strip() for line in body.splitlines() if line.startswith('data:'))
             tools = json.loads(body)['result']['tools']
             expected = json.loads((root / 'php/tools.json').read_text())
-            assert [t['name'] for t in tools] == [t['name'] for t in expected]
-            assert all(t['annotations']['readOnlyHint'] for t in tools)
-            print('HTTP: initialize + tools/list returned seven read-only tools')
+            expected_names = [t['name'] for t in expected] + ['vk_wall_post', 'vk_wall_edit']
+            assert [t['name'] for t in tools] == expected_names
+            indexed = {t['name']: t for t in tools}
+            assert all(indexed[t['name']]['annotations']['readOnlyHint'] for t in expected)
+            assert all(not indexed[name]['annotations']['readOnlyHint'] and not indexed[name]['annotations']['idempotentHint'] for name in ['vk_wall_post', 'vk_wall_edit'])
+            print('HTTP: initialize + tools/list returned seven read tools and two bounded write tools')
         finally:
             process.terminate()
             process.wait(timeout=5)
