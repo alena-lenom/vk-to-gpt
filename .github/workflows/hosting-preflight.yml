@@ -1,0 +1,56 @@
+name: REG.RU SSH preflight
+
+on:
+  push:
+    branches: [feat/php-mcp-http]
+    paths:
+      - ".github/workflows/hosting-preflight.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-host:
+    if: github.actor == 'alena-lenom'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: production
+    steps:
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          test -n "$SSH_KEY"
+          test -n "$KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Inspect hosting without changing it
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+        run: |
+          set -eu
+          test -n "$PROD_HOST"
+          test -n "$PROD_USER"
+          ssh -i "$HOME/.ssh/id_ed25519" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            "$PROD_USER@$PROD_HOST" 'sh -s' <<'REMOTE'
+          set -eu
+          printf 'ssh=ok\n'
+          if command -v git >/dev/null 2>&1; then git --version; else printf 'git=missing\n'; fi
+          if command -v php >/dev/null 2>&1; then php -r 'printf("php_cli=%s\n", PHP_VERSION);'; else printf 'php_cli=missing\n'; fi
+          if command -v composer >/dev/null 2>&1; then printf 'composer=present\n'; else printf 'composer=missing\n'; fi
+          site_root="$HOME/data/www/vk.tattoomystery.ru"
+          if [ -d "$site_root" ]; then printf 'site_root=present\n'; else printf 'site_root=missing\n'; fi
+          if [ -f "$site_root/index.html" ]; then printf 'index_html=present\n'; else printf 'index_html=missing\n'; fi
+          if [ -d "$site_root/.git" ]; then printf 'webroot_git=present\n'; else printf 'webroot_git=absent\n'; fi
+          REMOTE
