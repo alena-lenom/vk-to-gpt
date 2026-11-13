@@ -1,72 +1,47 @@
 # VK to GPT
 
-Read-only integration of VK (VKontakte) with ChatGPT through a secured remote Model Context Protocol (MCP) server.
+Personal VK integration for ChatGPT through a secured remote Model Context Protocol (MCP) server.
 
-**Status:** Minimal local read-only MCP prototype committed; no deployed HTTPS endpoint, verified VK credentials, or ChatGPT end-to-end connection yet.
+**Status:** Main contains a local read-only Node prototype. A PHP Streamable HTTP MCP adapter is on branch `feat/php-mcp-http`. No deployed endpoint, verified VK credentials, or ChatGPT end-to-end connection is confirmed.
 
 ## Goal
 
-Enable ChatGPT to read and analyze VK data that the current VK API, token type, permissions, and account rights actually allow:
+Let ChatGPT read and analyze the VK data available to the owner's authorized account, and create or edit the owner's publications where the official VK API and token permissions allow it.
 
-- Community and personal-page walls and posts.
-- Available comments and engagement counters (likes, reposts, views).
-- Available community statistics, reach, and audience metrics.
-- Reproducible comparisons of periods and evidence-based reports.
+- Read community and personal-page walls, posts, comments and available engagement/statistics.
+- Create and edit named publications through explicit, owner-requested actions.
+- Produce evidence-based comparisons and reports.
 
-Engagement counters are not substitutes for reach, visits, or audience statistics. Missing or restricted data must be stated explicitly.
+Available methods and metrics depend on VK API rules, token type, permissions, ownership and community settings. Do not invent unavailable data or promise unsupported actions.
 
 ## Architecture
 
-`VK API -> VK MCP Server (HTTPS, authenticated, read-only) -> ChatGPT -> Analytics and reports`
+`VK API -> secured, authenticated PHP MCP endpoint -> ChatGPT -> reading, analytics, and named publication actions`
 
-The implementation follows **REUSE -> ADAPT -> IMPLEMENT**: choose one proven upstream MCP server, adapt only what is required, and reuse other donors only for verified gaps.
+Reuse existing open-source code and adapt only the necessary parts. Keep named VK method allowlists; do not expose a generic arbitrary-method executor.
 
-**Candidates under review (not yet selected):**
+## Current implementations
 
-- [bulatko/vk-mcp-server](https://github.com/bulatko/vk-mcp-server) — current leading candidate.
-- [SCom-82/vk-community-mcp](https://github.com/SCom-82/vk-community-mcp) — potential stats method donor.
-- [theYahia/vk-mcp](https://github.com/theYahia/vk-mcp) — transport alternative.
-- [ilyautov/vk-mcp-ru](https://github.com/ilyautov/vk-mcp-ru) — VK API coverage reference.
+The main branch is a local stdio-only Node prototype with seven read-only tools. It is not a remote ChatGPT connector.
 
-Donor forks are held separately at [alena-Lenom-fork](https://github.com/alena-Lenom-fork). The first adapter is adapted from bulatko/vk-mcp-server patterns. Its MIT notice is preserved in [third_party/bulatko-LICENSE](third_party/bulatko-LICENSE); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Do not interpret this as evidence that the upstream server is already deployed.
+The `feat/php-mcp-http` branch contains a PHP Streamable HTTP endpoint and seven read-only tools. Its successful CI run does not prove installed production dependencies, live MCP handshake, VK authorization, or deployment.
 
+The open draft PR #1 proposes a Node/systemd production deployment and does not match the chosen PHP/Host-0 route. Do not use it for deployment.
 
-## Current local prototype
+## Actions and safeguards
 
-The prototype uses the upstream MCP server library and provides **seven read-only tools**: `vk_wall_get`, `vk_wall_get_by_id`, `vk_wall_get_comments`, `vk_users_get`, `vk_groups_get_by_id`, `vk_stats_get`, and `vk_post_reach`. A second VK API method allowlist blocks all write methods even when bypassing the MCP tool registry. VK errors are returned by numeric code only to avoid leaking request payloads.
+Creation and editing of the owner's publications are in scope. Implement only named actions mapped to officially supported VK methods and the owner's own token permissions. Require a clear owner instruction for each concrete write action; validate target and content, use method-level allowlists, return the VK result, and read back the affected object when supported.
 
-Requirements: Node.js 20+.
+Deletion, mass messaging, arbitrary API calls, and unrelated community/account administration are not authorized by this scope. Never bypass VK restrictions or use third-party/gray-area OAuth flows.
 
-```sh
-npm install
-npm test
-npm start
-```
+Store VK tokens and the MCP bearer secret outside the public webroot and Git. Do not put secrets in GitHub files, logs, fixtures, or reports. Keep minimal permissions and authenticate/authorize every remote MCP request.
 
-Use `VK_SERVICE_KEY` for permitted public VK reads and optionally `VK_USER_TOKEN` for statistics if it is lawfully issued with sufficient permissions. Store tokens in a private environment/secret store, not in tracked files or command history. `.env.example` documents variable names only. Statistics are **not confirmed available** with newly issued VK ID credentials.
+## Runtime and verification
 
-This prototype is **stdio-only** and is not a ChatGPT remote connector. No public HTTPS listener or OAuth callback is configured. Do not expose stdio through an unauthenticated HTTP bridge.
+Target host: REG.RU virtual hosting, Host-0; owner-reported PHP 8.4.27/Python 3.14 are not yet independently verified for the deployed runtime. The CLI versions observed earlier differed. Compatibility with the PHP HTTP endpoint, private secret storage and the current `/mcp` route remains unverified.
 
-The repository has a `node --test` suite covering blocked methods, injected parameters, API token precedence, pagination parameters and retry logic. Running and verifying the full Node suite remains a separate validation step; a committed test file is not evidence of passing CI.
-
-## Roadmap
-
-1. Audit donors: source, license, maintenance, transport, security and actual VK API coverage.
-2. Establish a strict read-only tool and VK method allowlist; test denial of write operations.
-3. Verify lawful VK ID/OAuth or service-key capabilities with real, redacted API evidence.
-4. Implement a secured remote MCP endpoint with HTTPS, access control, and server-side secret storage.
-5. Verify actual tool discovery and data reads from ChatGPT.
-6. Build analytics from confirmed metrics, with pagination, coverage and period-comparability checks.
-7. Verify failures, limits, data integrity, secret protection and reproducible end-to-end results.
-
-Each milestone is complete only with evidence (specific commit, test/CI run, VK API result or MCP/ChatGPT runtime result). A successful build alone does not prove integration.
-
-## Security and boundaries
-
-Read-only by default. No publishing, editing, deleting, messaging, scraping around VK restrictions, or unapproved production/DNS/credential changes. Do not place VK tokens, credentials, or personal/private datasets in Git, issue comments, logs, test fixtures or reports. Do not use third-party app identifiers or gray-area OAuth flows as a shortcut.
-
-The repository is independent of SAPI Control Center and Automation Platform.
+Before deployment, verify the PHP branch and dependencies, endpoint handshake and authentication, one real authorized read, then a safe create/edit flow only after capability and target are confirmed. Confirm actual ChatGPT connection to this endpoint. CI alone is not end-to-end evidence.
 
 ## Project documents
 
-The authoritative project and Core instructions, roadmap, research evidence and current decisions are in **Google Drive / VK to GPT**. After each substantive research cycle, verified findings are saved there and read back. This README is an entry point, not a second decision log.
+The current scope and roadmap are maintained in Google Drive / VK to GPT. This README is an entry point; after substantive research, save and verify findings in the existing project document.
