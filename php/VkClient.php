@@ -36,7 +36,12 @@ final class VkClient
             default => $this->serviceKey ?: $this->userToken,
         };
         if (!$token) {
-            throw new \RuntimeException('Required VK credential is not configured');
+            $required = match (true) {
+                $isWrite && $method === 'wall.post' && $writeTarget === 'community' => 'VK_COMMUNITY_TOKEN',
+                $isWrite || self::METHODS[$method] => 'VK_USER_TOKEN',
+                default => 'VK_SERVICE_KEY or VK_USER_TOKEN',
+            };
+            throw new \RuntimeException($required.' is not configured');
         }
         unset($params['access_token'], $params['v'], $params['method']);
         $body = http_build_query(array_filter($params, static fn ($v) => $v !== null) + ['access_token' => $token, 'v' => '5.199']);
