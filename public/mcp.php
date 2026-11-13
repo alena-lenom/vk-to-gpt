@@ -56,7 +56,7 @@ try {
         new CorsMiddleware(),
         new DnsRebindingProtectionMiddleware(allowedHosts: [$host]),
     ], maxBodyBytes: 65536);
-    $client = new VkToGpt\VkClient(getenv('VK_SERVICE_KEY') ?: null, getenv('VK_USER_TOKEN') ?: null);
+    $client = new VkToGpt\VkClient(getenv('VK_SERVICE_KEY') ?: null, getenv('VK_USER_TOKEN') ?: null, communityToken: getenv('VK_COMMUNITY_TOKEN') ?: null);
     $response = VkToGpt\buildServer($client, $sessions)->run($transport);
     http_response_code($response->getStatusCode());
     foreach ($response->getHeaders() as $name => $values) {

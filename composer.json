@@ -1,6 +1,6 @@
 {
   "name": "lenom/vk-to-gpt",
-  "description": "Read-only VK MCP HTTP endpoint",
+  "description": "VK MCP HTTP endpoint with restricted wall publishing",
   "type": "project",
   "require": {
     "php": "~8.4.0",
