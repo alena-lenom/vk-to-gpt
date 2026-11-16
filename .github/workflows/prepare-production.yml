@@ -1,4 +1,4 @@
-name: REG.RU PHP release preparation
+name: REG.RU PHP deploy
 
 on:
   push:
@@ -6,10 +6,20 @@ on:
     paths:
       - .github/workflows/prepare-production.yml
       - composer.lock
+      - "deploy/**"
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish to REG.RU after tests
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+
+concurrency:
+  group: vk-to-gpt-production
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -36,6 +46,7 @@ jobs:
       - name: Test PHP, contracts, HTTP transport and Node reads
         run: |
           set -eu
+          php -l deploy/mcp.php
           composer test
           node test/php/contract.mjs
           node --test test/read-only.test.js
@@ -46,6 +57,8 @@ jobs:
           mkdir -p artifact/release
           cp composer.json composer.lock THIRD_PARTY_NOTICES.md artifact/release/
           cp -R php public vendor third_party artifact/release/
+          mkdir artifact/release/deploy
+          cp deploy/mcp.php artifact/release/deploy/
           printf '%s\n' "$GITHUB_SHA" > artifact/release/REVISION
           tar -C artifact/release -czf artifact/vk-to-gpt-php.tar.gz .
           (cd artifact && sha256sum vk-to-gpt-php.tar.gz > SHA256SUMS)
@@ -96,7 +109,115 @@ jobs:
           else
             echo private_configuration=missing
           fi
-          echo web_php_handler=requires_confirmation
-          echo publication=not_requested
+          echo inspection=read_only
           REMOTE
           cat "$RUNNER_TEMP/hosting-readiness.txt" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.actor == 'alena-lenom'
+    needs: [build, inspect-host]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      PROD_HOST: ${{ secrets.PROD_HOST }}
+      PROD_USER: ${{ secrets.PROD_USER }}
+      TAG: ${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: vk-to-gpt-php-${{ github.sha }}
+          path: artifact
+      - name: Configure trusted SSH
+        env:
+          SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          printf '%s\n' 'Host *' '  BatchMode yes' '  IdentitiesOnly yes' '  StrictHostKeyChecking yes' '  ConnectTimeout 15' > "$HOME/.ssh/config"
+          ssh-keygen -F "$PROD_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
+      - name: Transfer tested artifact
+        run: |
+          set -eu
+          python3 -B deploy/verify.py --baseline "$RUNNER_TEMP/home.sha256"
+          (cd artifact && sha256sum -c SHA256SUMS)
+          ssh "$PROD_USER@$PROD_HOST" "set -eu; umask 077; test ! -L /var/www/u3641285/data/vk-to-gpt; mkdir -p /var/www/u3641285/data/vk-to-gpt/incoming/$TAG; chmod 700 /var/www/u3641285/data/vk-to-gpt /var/www/u3641285/data/vk-to-gpt/incoming /var/www/u3641285/data/vk-to-gpt/incoming/$TAG"
+          scp -q artifact/vk-to-gpt-php.tar.gz "$PROD_USER@$PROD_HOST:/var/www/u3641285/data/vk-to-gpt/incoming/$TAG/package.tgz"
+      - name: Back up and publish
+        id: publish
+        run: |
+          ssh "$PROD_USER@$PROD_HOST" bash -s -- "$TAG" "$GITHUB_SHA" <<'REMOTE'
+          set -euo pipefail
+          umask 077
+          base=/var/www/u3641285/data/vk-to-gpt
+          site=/var/www/u3641285/data/www/vk.tattoomystery.ru
+          php=/opt/php/8.4/bin/php
+          incoming="$base/incoming/$1"
+          backup="$base/backups/$1"
+          test ! -L "$base/app" && test ! -L "$base/shared"
+          test ! -L "$site/mcp.php" && test ! -L "$site/.htaccess"
+          if test -f "$site/mcp.php"; then grep -q 'Managed VK to GPT entrypoint' "$site/mcp.php"; fi
+          test ! -e "$backup"
+          mkdir -p "$incoming/app" "$backup" "$base/shared/sessions"
+          chmod 700 "$base/shared" "$base/shared/sessions" "$base/backups" "$backup"
+          tar --no-same-owner -xzf "$incoming/package.tgz" -C "$incoming/app"
+          test "$(cat "$incoming/app/REVISION")" = "$2"
+          test ! -L "$base/shared/config.php"
+          if test ! -e "$base/shared/config.php"; then
+            "$php" -r '$c=["MCP_BEARER_TOKEN"=>bin2hex(random_bytes(32)),"MCP_ALLOWED_HOST"=>"vk.tattoomystery.ru","MCP_SESSION_DIR"=>$argv[1]."/shared/sessions"]; file_put_contents($argv[1]."/shared/config.php","<?php\nreturn ".var_export($c,true).";\n",LOCK_EX); chmod($argv[1]."/shared/config.php",0600);' "$base"
+          fi
+          "$php" -r '$p=$argv[1]."/shared/config.php"; $c=require $p; if((fileperms($p)&0077)!==0 || !is_array($c) || !is_string($c["MCP_BEARER_TOKEN"]??null) || strlen($c["MCP_BEARER_TOKEN"])<32 || ($c["MCP_ALLOWED_HOST"]??null)!=="vk.tattoomystery.ru" || ($c["MCP_SESSION_DIR"]??null)!==$argv[1]."/shared/sessions") exit(1); require $argv[2]."/vendor/autoload.php";' "$base" "$incoming/app" >/dev/null 2>&1
+          sha256sum "$site/index.html" > "$backup/index.sha256"
+          for f in mcp.php .htaccess; do if test -f "$site/$f"; then cp -p "$site/$f" "$backup/$f"; fi; done
+          if test -d "$base/app"; then cp -a "$base/app" "$backup/app"; fi
+          touch "$backup/ready"
+          mkdir -p "$base/app"
+          rsync -a --delete "$incoming/app/" "$base/app/"
+          install -m 644 "$base/app/deploy/mcp.php" "$site/mcp.php"
+          cat > "$incoming/new.htaccess" <<'HTACCESS'
+          # BEGIN VK TO GPT MCP
+          RewriteEngine On
+          RewriteRule ^ - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+          SetEnvIfNoCase Authorization "(.+)" HTTP_AUTHORIZATION=$1
+          RewriteRule ^mcp/?$ mcp.php [L]
+          # END VK TO GPT MCP
+          HTACCESS
+          if test -f "$site/.htaccess"; then sed '/^# BEGIN VK TO GPT MCP$/,/^# END VK TO GPT MCP$/d' "$site/.htaccess" >> "$incoming/new.htaccess"; fi
+          install -m 644 "$incoming/new.htaccess" "$site/.htaccess"
+          sha256sum --status -c "$backup/index.sha256"
+          echo publication=ok
+          echo index_preserved=yes
+          REMOTE
+      - name: Verify HTTPS and MCP without VK calls
+        run: |
+          set -euo pipefail
+          ssh "$PROD_USER@$PROD_HOST" /opt/php/8.4/bin/php <<'PHP' | python3 -B deploy/verify.py "$RUNNER_TEMP/home.sha256"
+          <?php
+          $config = require '/var/www/u3641285/data/vk-to-gpt/shared/config.php';
+          echo $config['MCP_BEARER_TOKEN'];
+          PHP
+          printf '%s\n' 'Published and verified https://vk.tattoomystery.ru/mcp; index.html preserved; no VK calls.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Restore backup on publication or HTTPS failure
+        if: failure() && (steps.publish.outcome == 'success' || steps.publish.outcome == 'failure')
+        run: |
+          ssh "$PROD_USER@$PROD_HOST" bash -s -- "$TAG" <<'REMOTE'
+          set -eu
+          base=/var/www/u3641285/data/vk-to-gpt
+          site=/var/www/u3641285/data/www/vk.tattoomystery.ru
+          backup="$base/backups/$1"
+          test -f "$backup/ready" || exit 0
+          for f in mcp.php .htaccess; do
+            if test -f "$backup/$f"; then cp -p "$backup/$f" "$site/$f"; else rm -f "$site/$f"; fi
+          done
+          if test -d "$backup/app"; then rsync -a --delete "$backup/app/" "$base/app/"; elif test -d "$base/app"; then mv "$base/app" "$base/incoming/$1/failed-app"; fi
+          sha256sum --status -c "$backup/index.sha256"
+          echo backup_restored=yes
+          REMOTE
+      - name: Remove temporary SSH files
+        if: always()
+        run: rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
