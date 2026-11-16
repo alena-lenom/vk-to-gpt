@@ -82,5 +82,21 @@ jobs:
           printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
           printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           ssh-keygen -F "$PROD_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
-          ssh -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o LogLevel=ERROR -i "$HOME/.ssh/id_ed25519" "$PROD_USER@$PROD_HOST" 'set -eu; test -x /opt/php/8.4/bin/php; /opt/php/8.4/bin/php -r '''if (PHP_VERSION_ID < 80400 || PHP_VERSION_ID >= 80500) exit(1); foreach (["curl","json","openssl","mbstring","fileinfo"] as $e) if (!extension_loaded($e)) exit(1); echo "hosting_php84_extensions=ok\n";'''; p=/var/www/u3641285/data/www/vk.tattoomystery.ru; test -d "$p"; test -w "$p"; test -f "$p/index.html"; echo site_target_and_index=ok; if test -f /var/www/u3641285/data/vk-to-gpt/shared/config.php; then echo private_configuration=present_unvalidated; else echo private_configuration=missing; fi; echo web_php_handler=requires_confirmation; echo publication=not_requested' | tee "$RUNNER_TEMP/hosting-readiness.txt"
+          ssh -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o LogLevel=ERROR -i "$HOME/.ssh/id_ed25519" "$PROD_USER@$PROD_HOST" sh -s <<'REMOTE' | tee "$RUNNER_TEMP/hosting-readiness.txt"
+          set -eu
+          test -x /opt/php/8.4/bin/php
+          /opt/php/8.4/bin/php -r 'if (PHP_VERSION_ID < 80400 || PHP_VERSION_ID >= 80500) exit(1); foreach (["curl","json","openssl","mbstring","fileinfo"] as $e) if (!extension_loaded($e)) exit(1); echo "hosting_php84_extensions=ok\n";'
+          p=/var/www/u3641285/data/www/vk.tattoomystery.ru
+          test -d "$p"
+          test -w "$p"
+          test -f "$p/index.html"
+          echo site_target_and_index=ok
+          if test -f /var/www/u3641285/data/vk-to-gpt/shared/config.php; then
+            echo private_configuration=present_unvalidated
+          else
+            echo private_configuration=missing
+          fi
+          echo web_php_handler=requires_confirmation
+          echo publication=not_requested
+          REMOTE
           cat "$RUNNER_TEMP/hosting-readiness.txt" >> "$GITHUB_STEP_SUMMARY"
