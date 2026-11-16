@@ -61,9 +61,9 @@ check($method==='wall.createComment' && $target==='community' && $params['owner_
 check(WriteTools::resolve('vk_wall_create_comment',['target'=>'personal','post_id'=>9,'message'=>'Comment'],'123','456')[2]==='personal');
 rejects(fn()=>WriteTools::resolve('vk_wall_create_comment',['target'=>'community','post_id'=>9,'message'=>'x','reply_to_comment'=>'4'],'123','456'),'reply_to_comment');
 $writeClient->call('wall.createComment',['owner_id'=>-456,'post_id'=>9,'message'=>'Reply','guid'=>'g'],'community');
-check($writeRequests[2][1]['access_token']==='community-token' && $writeRequests[2][1]['owner_id']==='-456' && $writeRequests[2][1]['post_id']==='9');
+check($writeRequests[1][1]['access_token']==='community-token' && $writeRequests[1][1]['owner_id']==='-456' && $writeRequests[1][1]['post_id']==='9');
 $writeClient->call('wall.edit',['owner_id'=>123,'post_id'=>9,'message'=>'Edit'],'personal');
-check($writeRequests[3][1]['access_token']==='user-token' && $writeRequests[3][1]['owner_id']==='123');
+check($writeRequests[2][1]['access_token']==='user-token' && $writeRequests[2][1]['owner_id']==='123');
 $writeAttempts=0;
 $writeLimited=new VkClient('service','user',function() use (&$writeAttempts) { ++$writeAttempts; return [200,'{"error":{"error_code":6}}']; },function(){},'community');
 rejects(fn()=>$writeLimited->call('wall.post',['owner_id'=>-1,'message'=>'x'],'community'),'error 6');
