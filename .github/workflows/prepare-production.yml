@@ -1,0 +1,86 @@
+name: REG.RU PHP release preparation
+
+on:
+  push:
+    branches: [feat/php-mcp-http]
+    paths:
+      - .github/workflows/prepare-production.yml
+      - composer.lock
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          tools: composer:v2
+          extensions: curl, fileinfo, json, openssl, mbstring
+          coverage: none
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install and verify dependencies
+        run: |
+          set -eu
+          composer validate --no-check-publish
+          composer install --no-dev --no-interaction --prefer-dist --no-progress --no-scripts --no-plugins --optimize-autoloader
+          composer check-platform-reqs --no-dev
+          composer audit --locked --no-interaction
+      - name: Test PHP, contracts, HTTP transport and Node reads
+        run: |
+          set -eu
+          composer test
+          node test/php/contract.mjs
+          node --test test/read-only.test.js
+          python3 -B test/php/smoke_http.py
+      - name: Package private application and public entrypoint
+        run: |
+          set -eu
+          mkdir -p artifact/release
+          cp composer.json composer.lock THIRD_PARTY_NOTICES.md artifact/release/
+          cp -R php public vendor third_party artifact/release/
+          printf '%s\n' "$GITHUB_SHA" > artifact/release/REVISION
+          tar -C artifact/release -czf artifact/vk-to-gpt-php.tar.gz .
+          (cd artifact && sha256sum vk-to-gpt-php.tar.gz > SHA256SUMS)
+          cp composer.lock artifact/composer.lock
+          printf '%s\n' 'PHP artifact built and tested in GitHub Actions. No hosting files changed.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vk-to-gpt-php-${{ github.sha }}
+          path: |
+            artifact/vk-to-gpt-php.tar.gz
+            artifact/SHA256SUMS
+            artifact/composer.lock
+          if-no-files-found: error
+          retention-days: 7
+
+  inspect-host:
+    if: github.actor == 'alena-lenom'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: production
+    steps:
+      - name: Inspect deployment prerequisites without writing hosting files
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+          SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          install -d -m 700 "$HOME/.ssh"
+          trap 'rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"' EXIT
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          ssh-keygen -F "$PROD_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
+          ssh -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o LogLevel=ERROR -i "$HOME/.ssh/id_ed25519" "$PROD_USER@$PROD_HOST" 'set -eu; test -x /opt/php/8.4/bin/php; /opt/php/8.4/bin/php -r '''if (PHP_VERSION_ID < 80400 || PHP_VERSION_ID >= 80500) exit(1); foreach (["curl","json","openssl","mbstring","fileinfo"] as $e) if (!extension_loaded($e)) exit(1); echo "hosting_php84_extensions=ok\n";'''; p=/var/www/u3641285/data/www/vk.tattoomystery.ru; test -d "$p"; test -w "$p"; test -f "$p/index.html"; echo site_target_and_index=ok; if test -f /var/www/u3641285/data/vk-to-gpt/shared/config.php; then echo private_configuration=present_unvalidated; else echo private_configuration=missing; fi; echo web_php_handler=requires_confirmation; echo publication=not_requested' | tee "$RUNNER_TEMP/hosting-readiness.txt"
+          cat "$RUNNER_TEMP/hosting-readiness.txt" >> "$GITHUB_STEP_SUMMARY"
