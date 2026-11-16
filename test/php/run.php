@@ -76,4 +76,20 @@ foreach ([fn()=>[200,'not-json fake-secret'],fn()=>[500,'fake-secret'],fn()=>[20
 $attempt=0; $waits=[];
 $limited = new VkClient('fake',null,function() use (&$attempt) { ++$attempt; return [200,'{"error":{"error_code":6}}']; },function($d) use (&$waits){$waits[]=$d;});
 rejects(fn()=>$limited->call('wall.get'),'error 6'); check($attempt===4 && $waits===[500000,1000000,2000000]);
+// Community credentials may read group identity, never substitute for user-only reads.
+$communityReads=[];
+$communityRead=new VkClient(null,null,function($url,$body) use (&$communityReads) {
+    parse_str($body,$params); $communityReads[]=$params;
+    return [200,'{"response":{"groups":[{"id":2}]}}'];
+},communityToken:'fake-community');
+check($communityRead->call('groups.getById',['group_ids'=>'2'])===['groups'=>[['id'=>2]]]);
+check($communityReads[0]['access_token']==='fake-community');
+rejects(fn()=>$communityRead->call('wall.get',['owner_id'=>-2]),'VK_SERVICE_KEY or VK_USER_TOKEN');
+rejects(fn()=>$communityRead->call('stats.get',['group_id'=>2]),'VK_USER_TOKEN');
+check(count($communityReads)===1);
+$preferred=[];
+$preferredFetch=function($url,$body) use (&$preferred) {parse_str($body,$params); $preferred[]=$params['access_token']; return [200,'{"response":[]}'];};
+(new VkClient('fake-service','fake-user',$preferredFetch,communityToken:'fake-community'))->call('groups.getById');
+(new VkClient(null,'fake-user',$preferredFetch,communityToken:'fake-community'))->call('groups.getById');
+check($preferred===['fake-service','fake-user']);
 echo "PHP: $n checks passed (mock VK only)\n";

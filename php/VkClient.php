@@ -33,12 +33,13 @@ final class VkClient
             $isWrite && $method === 'wall.post' && $writeTarget === 'community' => $this->communityToken,
             $isWrite => $this->userToken,
             self::METHODS[$method] => $this->userToken,
-            default => $this->serviceKey ?: $this->userToken,
+            default => $this->serviceKey ?: $this->userToken ?: ($method === 'groups.getById' ? $this->communityToken : null),
         };
         if (!$token) {
             $required = match (true) {
                 $isWrite && $method === 'wall.post' && $writeTarget === 'community' => 'VK_COMMUNITY_TOKEN',
                 $isWrite || self::METHODS[$method] => 'VK_USER_TOKEN',
+                $method === 'groups.getById' => 'VK_SERVICE_KEY or VK_USER_TOKEN or VK_COMMUNITY_TOKEN',
                 default => 'VK_SERVICE_KEY or VK_USER_TOKEN',
             };
             throw new \RuntimeException($required.' is not configured');
