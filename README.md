@@ -2,7 +2,7 @@
 
 VK integration for ChatGPT through a secured remote Model Context Protocol (MCP) server, with bounded read, post, and edit operations.
 
-**Status:** Node stdio prototype remains read-only. The PHP 8.4 Streamable HTTP branch adds bounded wall post/edit tools; it is not deployed. Tests use mocked VK responses. No live VK write, real credential check, or ChatGPT end-to-end connection is claimed.
+**Status:** The Node stdio prototype on `main` remains read-only. The PHP 8.4 branch `feat/php-mcp-http` is deployed on REG.RU at release SHA `563cb4737fc42c9786d8266888fd6a7a6ed7c3a5`. GitHub Actions verified HTTPS authentication, MCP initialize, and discovery of seven read and two bounded write tools. A community-info VK read succeeded; wall/statistics access, live post/edit, and ChatGPT-to-endpoint invocation remain unverified.
 
 ## Goal
 
@@ -49,7 +49,7 @@ This prototype is **stdio-only** and is not a ChatGPT remote connector. No publi
 
 Local validation on macOS: `npm test` passed all 6 Node tests. The Node stdio implementation is unchanged.
 
-## PHP HTTP endpoint (REG.RU Host 0 target; not deployed)
+## PHP HTTP endpoint (REG.RU Host 0; deployed release)
 
 `public/mcp.php` uses the official experimental [mcp/sdk](https://github.com/modelcontextprotocol/php-sdk) (Apache-2.0), with `nyholm/psr7` as its PSR-7/17 implementation. There is no application framework or custom MCP protocol implementation. `php/tools.json` mirrors the seven read-only Node tools and the parity test detects drift. PHP adds `vk_wall_post` and `vk_wall_edit` through a separate strict allowlist, with target IDs fixed in server configuration. Community publishing uses `VK_COMMUNITY_TOKEN`; personal publishing and both edit targets use `VK_USER_TOKEN`. Read requests may retry rate limits; writes never retry after an uncertain response. There is no delete tool. Tool arguments never accept credentials or arbitrary owner IDs.
 
@@ -77,7 +77,7 @@ The smoke test starts and stops temporary PHP HTTP listeners with isolated envir
 
 **Still unverified:** none of this ran on the REG.RU Host 0 runtime. Hosting PHP version and extensions, outbound verified HTTPS to VK, private environment configuration and session storage, and PHP execution limits remain to be validated on the target host. Live VK reads/writes and a ChatGPT end-to-end connection are separate acceptance checks and are not claimed.
 
-**Production requirements remaining:** verify REG.RU Host 0 actually supports PHP 8.4 and the resolved dependencies, outbound verified HTTPS to VK, private environment configuration and session storage, and PHP execution limits sufficient for VK timeouts/retries. Serve only `public/` as the document root over HTTPS with a valid certificate; keep `vendor/`, source, Git, environment and session files outside it. Confirm Apache/FastCGI passes Authorization and MCP headers, request-size/time limits, session continuity across workers, and SDK responses through hosting buffering. Add hosting-level request/rate limits and disable PHP error display. Validate HTTPS unauthorized rejection, Host/Origin rejection, initialize, discovery and mocked read failures on the intended runtime. Static bearer authentication is not an OAuth implementation; confirm the intended MCP client's authentication support separately. Actual lawful VK access and ChatGPT end-to-end use remain separate acceptance checks. No REG.RU connection or deployment has been performed.
+**Remaining GAP:** deployed MCP transport is verified, but ChatGPT cannot yet be counted as connected end to end; the current plugin authentication setup is not compatible with the static bearer flow. A real community-info VK read is recorded in Drive / VK to GPT, section 55. The private project record tracks which VK credentials are currently configured. Other wall/statistics methods and community posting permissions still need method-specific live verification. The owner has confirmed she has the needed token types; do not request or expose token values. No live VK write has been performed.
 
 ## Roadmap
 
