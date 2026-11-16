@@ -10,7 +10,7 @@ final class ReadOnlyTools
         return json_decode(file_get_contents(__DIR__.'/tools.json'), true, flags: JSON_THROW_ON_ERROR);
     }
 
-    public static function resolve(string $name, array $args): array
+    public static function resolve(string $name, array $args, ?string $personalOwnerId = null, ?string $communityId = null): array
     {
         $tools = array_column(self::definitions(), null, 'name');
         if (!isset($tools[$name])) {
@@ -45,6 +45,21 @@ final class ReadOnlyTools
             }
             return trim($value);
         };
+        $personalOwnerId ??= getenv('VK_PERSONAL_OWNER_ID') ?: null;
+        $communityId ??= getenv('VK_COMMUNITY_ID') ?: null;
+        $configuredId = static function (?string $value): ?int {
+            return is_string($value) && preg_match('/^[1-9][0-9]*$/D', $value) && (float) $value <= 2147483647
+                ? (int) $value
+                : null;
+        };
+        $personalId = $configuredId($personalOwnerId);
+        $communityGroupId = $configuredId($communityId);
+        $assertOwner = static function (int $ownerId) use ($personalId, $communityGroupId): void {
+            if (($personalId === null || $ownerId !== $personalId)
+                && ($communityGroupId === null || $ownerId !== -$communityGroupId)) {
+                throw new \InvalidArgumentException('Target is not configured');
+            }
+        };
         $group = static fn () => $int('group_id', 1, 2147483647);
         $wall = static fn () => [
             'owner_id' => $int('owner_id', -2147483647, 2147483647),
@@ -65,6 +80,42 @@ final class ReadOnlyTools
                 'interval' => $enum('interval', ['day', 'week', 'month', 'year', 'all'], 'day'),
             ]],
         };
+        switch ($name) {
+            case 'vk_wall_get':
+            case 'vk_wall_get_comments':
+                $assertOwner($params['owner_id']);
+                break;
+            case 'vk_wall_get_by_id':
+                $postOwners = array_values(array_unique(array_map(
+                    static fn (string $post) => (int) explode('_', $post, 2)[0],
+                    explode(',', $params['posts']),
+                )));
+                if (count($postOwners) !== 1) {
+                    throw new \InvalidArgumentException('Posts must belong to one configured wall');
+                }
+                $assertOwner($postOwners[0]);
+                break;
+            case 'vk_users_get':
+                if ($personalId === null || $params['user_ids'] !== (string) $personalId) {
+                    throw new \InvalidArgumentException('Target is not configured');
+                }
+                break;
+            case 'vk_groups_get_by_id':
+                if ($communityGroupId === null || $params['group_ids'] !== (string) $communityGroupId) {
+                    throw new \InvalidArgumentException('Target is not configured');
+                }
+                break;
+            case 'vk_stats_get':
+                if ($communityGroupId === null || $params['group_id'] !== $communityGroupId) {
+                    throw new \InvalidArgumentException('Target is not configured');
+                }
+                break;
+            case 'vk_post_reach':
+                if ($communityGroupId === null || $params['owner_id'] !== -$communityGroupId) {
+                    throw new \InvalidArgumentException('Target is not configured');
+                }
+                break;
+        }
         if (isset($params['timestamp_from'], $params['timestamp_to']) && $params['timestamp_from'] > $params['timestamp_to']) {
             throw new \InvalidArgumentException('Invalid period');
         }

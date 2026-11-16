@@ -1,7 +1,7 @@
 [
   {
     "name": "vk_wall_get",
-    "description": "Read public wall posts; community owner_id is negative",
+    "description": "Read posts from the configured personal or community wall; community owner_id is negative",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -34,7 +34,7 @@
   },
   {
     "name": "vk_wall_get_by_id",
-    "description": "Read specified wall posts by IDs",
+    "description": "Read specified posts belonging to one configured wall",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -50,7 +50,7 @@
   },
   {
     "name": "vk_wall_get_comments",
-    "description": "Read comments on a wall post",
+    "description": "Read comments on a post from a configured personal or community wall",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -79,7 +79,7 @@
   },
   {
     "name": "vk_users_get",
-    "description": "Read public VK user profile fields",
+    "description": "Read the configured owner's VK profile fields only",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -95,7 +95,7 @@
   },
   {
     "name": "vk_groups_get_by_id",
-    "description": "Read VK community information",
+    "description": "Read the configured VK community information only",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -112,7 +112,7 @@
   },
   {
     "name": "vk_stats_get",
-    "description": "Read available community statistics (may be unavailable for your token)",
+    "description": "Read available statistics for the configured community (requires an eligible user token)",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -147,7 +147,7 @@
   },
   {
     "name": "vk_post_reach",
-    "description": "Read available reach for specified community posts (token dependent)",
+    "description": "Read available reach for posts in the configured community (token dependent)",
     "inputSchema": {
       "type": "object",
       "properties": {

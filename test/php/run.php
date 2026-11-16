@@ -8,6 +8,9 @@ use VkToGpt\ReadOnlyTools as Tools;
 use VkToGpt\VkClient;
 use VkToGpt\WriteTools;
 
+putenv('VK_PERSONAL_OWNER_ID=1');
+putenv('VK_COMMUNITY_ID=2');
+
 $n = 0;
 function check(bool $ok): void { global $n; ++$n; if (!$ok) throw new RuntimeException('Check '.$n.' failed'); }
 function rejects(Closure $run, string $text): void {
@@ -19,10 +22,11 @@ foreach ([null, '', 'Basic fake', 'Bearer wrong', 'Bearer fake extra', 'Bearer f
 check(VkToGpt\authorized('fake', 'bearer fake'));
 check(count(Tools::definitions()) === 7);
 $cases = [
-    ['vk_wall_get', ['owner_id'=>-1], ['wall.get', ['owner_id'=>-1,'count'=>20]]],
-    ['vk_wall_get_by_id', ['posts'=>' -1_2,3_4 '], ['wall.getById',['posts'=>'-1_2,3_4']]],
-    ['vk_wall_get_comments', ['owner_id'=>-1,'post_id'=>2,'offset'=>0], ['wall.getComments',['owner_id'=>-1,'count'=>20,'offset'=>0,'post_id'=>2]]],
-    ['vk_users_get', ['user_ids'=>'1,2'], ['users.get',['user_ids'=>'1,2']]],
+    ['vk_wall_get', ['owner_id'=>-2], ['wall.get', ['owner_id'=>-2,'count'=>20]]],
+    ['vk_wall_get', ['owner_id'=>1], ['wall.get', ['owner_id'=>1,'count'=>20]]],
+    ['vk_wall_get_by_id', ['posts'=>' -2_2 '], ['wall.getById',['posts'=>'-2_2']]],
+    ['vk_wall_get_comments', ['owner_id'=>-2,'post_id'=>2,'offset'=>0], ['wall.getComments',['owner_id'=>-2,'count'=>20,'offset'=>0,'post_id'=>2]]],
+    ['vk_users_get', ['user_ids'=>'1'], ['users.get',['user_ids'=>'1']]],
     ['vk_groups_get_by_id', ['group_id'=>2], ['groups.getById',['group_ids'=>'2']]],
     ['vk_stats_get', ['group_id'=>2], ['stats.get',['group_id'=>2,'interval'=>'day']]],
     ['vk_post_reach', ['group_id'=>2,'post_ids'=>'3,4'], ['stats.getPostReach',['owner_id'=>-2,'post_ids'=>'3,4']]],
@@ -31,8 +35,11 @@ foreach ($cases as [$name,$args,$expected]) check(Tools::resolve($name,$args) ==
 foreach ([['owner_id'=>'1'],['owner_id'=>1.0],['owner_id'=>1,'count'=>101],['owner_id'=>1,'count'=>null],['owner_id'=>1,'filter'=>null],['owner_id'=>1,'access_token'=>'x'],['owner_id'=>1,'offset'=>10000001]] as $args) rejects(fn()=>Tools::resolve('vk_wall_get',$args), '');
 rejects(fn()=>Tools::resolve('__proto__',[]),'blocked');
 rejects(fn()=>Tools::resolve('vk_wall_post',[]),'blocked');
-rejects(fn()=>Tools::resolve('vk_stats_get',['group_id'=>1,'timestamp_from'=>2,'timestamp_to'=>1]),'period');
+rejects(fn()=>Tools::resolve('vk_stats_get',['group_id'=>2,'timestamp_from'=>2,'timestamp_to'=>1]),'period');
 rejects(fn()=>Tools::resolve('vk_wall_get_by_id',['posts'=>'1_2;wall.post']),'posts');
+rejects(fn()=>Tools::resolve('vk_wall_get',['owner_id'=>-999]),'Target is not configured');
+rejects(fn()=>Tools::resolve('vk_users_get',['user_ids'=>'2']),'Target is not configured');
+rejects(fn()=>Tools::resolve('vk_wall_get_by_id',['posts'=>'-2_3,1_4']),'one configured wall');
 check(count(WriteTools::definitions()) === 2);
 check(WriteTools::resolve('vk_wall_post',['target'=>'personal','message'=>' Hello '],'123','456')[0] === 'wall.post');
 [$method,$params,$target] = WriteTools::resolve('vk_wall_post',['target'=>'community','message'=>'Text'],'123','456');
@@ -62,9 +69,24 @@ $client = new VkClient('fake-service','fake-user',function($url,$body) use (&$re
     parse_str($body,$params); $requests[]=[$url,$params];
     return [200,json_encode(++$attempt === 1 ? ['error'=>['error_code'=>6,'request_params'=>['secret']]] : ['response'=>['items'=>[]]])];
 },function($delay) use (&$waits) { $waits[]=$delay; });
-check($client->call('wall.get',['owner_id'=>-1,'offset'=>10,'access_token'=>'injected','v'=>'0','method'=>'wall.post']) === ['items'=>[]]);
+check($client->call('wall.get',['owner_id'=>-2,'offset'=>10,'access_token'=>'injected','v'=>'0','method'=>'wall.post']) === ['items'=>[]]);
 check(count($requests)===2 && $waits===[500000]);
-check($requests[0]===['https://api.vk.com/method/wall.get',['owner_id'=>'-1','offset'=>'10','access_token'=>'fake-service','v'=>'5.199']]);
+check($requests[0]===['https://api.vk.com/method/wall.get',['owner_id'=>'-2','offset'=>'10','access_token'=>'fake-service','v'=>'5.199']]);
+$personalAttempts=[];
+$personalClient=new VkClient('fake-service','fake-user',function($url,$body) use (&$personalAttempts) {
+    parse_str($body,$params); $personalAttempts[]=$params['access_token'];
+    return [200,$params['access_token']==='fake-user' ? '{"error":{"error_code":27}}' : '{"response":{"items":[]}}'];
+});
+check($personalClient->call('wall.get',['owner_id'=>1])===['items'=>[]]);
+check($personalAttempts===['fake-user','fake-service']);
+$deniedAttempts=0;
+$deniedClient=new VkClient('fake-service','fake-user',function() use (&$deniedAttempts) {
+    ++$deniedAttempts; return [200,'{"error":{"error_code":15}}'];
+});
+rejects(fn()=>$deniedClient->call('wall.get',['owner_id'=>1]),'error 15');
+check($deniedAttempts===1);
+
+
 $client->call('stats.get'); check($requests[2][1]['access_token']==='fake-user');
 foreach (['wall.delete','messages.send','__proto__','wall.get/../wall.post'] as $method) rejects(fn()=>$client->call($method),'blocked');
 check(count($requests)===3);

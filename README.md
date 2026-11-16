@@ -1,34 +1,27 @@
 # VK to GPT
 
-VK integration for ChatGPT through a secured remote Model Context Protocol (MCP) server, with bounded read, post, and edit operations.
+VK integration for ChatGPT through a secured remote Model Context Protocol (MCP) connector. The product goal is normal full social work with the owner's personal page and community, bounded by VK API permissions and an explicit method allowlist.
 
 **Status:** The Node stdio prototype on `main` remains read-only. The PHP 8.4 branch `feat/php-mcp-http` is deployed on REG.RU at release SHA `563cb4737fc42c9786d8266888fd6a7a6ed7c3a5`. GitHub Actions verified HTTPS authentication, MCP initialize, and discovery of seven read and two bounded write tools. A community-info VK read succeeded; wall/statistics access, live post/edit, and ChatGPT-to-endpoint invocation remain unverified.
 
 ## Goal
 
-Enable ChatGPT to read and analyze VK data, and publish or edit wall posts only when explicitly requested and allowed by the VK API, token type, permissions, and account rights:
+Enable ChatGPT to work with VK like a social-network connector: read and analyze content, publish and edit, work with comments and community inbox, use supported reactions/reposts, and manage supported community objects. Each operation must be available in the official VK API and authorized for the configured personal/community context:
 
-- Community and personal-page walls and posts, including explicit text post creation and text editing on configured targets.
-- Available comments and engagement counters (likes, reposts, views).
-- Available community statistics, reach, and audience metrics.
-- Reproducible comparisons of periods and evidence-based reports.
+- Personal and community profiles, walls, posts and attachments.
+- Create/edit posts and, when supported, delete own content; manage comments/replies and community conversations.
+- Use supported reactions, reposts and community-management methods.
+- Read available counters, community statistics and reach; compare periods and produce evidence-based reports.
 
 Engagement counters are not substitutes for reach, visits, or audience statistics. Missing or restricted data must be stated explicitly.
 
 ## Architecture
 
-`VK API -> VK MCP Server (HTTPS, authenticated, restricted reads and writes) -> ChatGPT -> Analytics and reports`
+`ChatGPT -> secured VK MCP connector -> VK API -> content actions and analytics`
 
 The implementation follows **REUSE -> ADAPT -> IMPLEMENT**: choose one proven upstream MCP server, adapt only what is required, and reuse other donors only for verified gaps.
 
-**Candidates under review (not yet selected):**
-
-- [bulatko/vk-mcp-server](https://github.com/bulatko/vk-mcp-server) — current leading candidate.
-- [SCom-82/vk-community-mcp](https://github.com/SCom-82/vk-community-mcp) — potential stats method donor.
-- [theYahia/vk-mcp](https://github.com/theYahia/vk-mcp) — transport alternative.
-- [ilyautov/vk-mcp-ru](https://github.com/ilyautov/vk-mcp-ru) — VK API coverage reference.
-
-Donor forks are held separately at [alena-Lenom-fork](https://github.com/alena-Lenom-fork). The first adapter is adapted from bulatko/vk-mcp-server patterns. Its MIT notice is preserved in [third_party/bulatko-LICENSE](third_party/bulatko-LICENSE); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Do not interpret this as evidence that the upstream server is already deployed.
+**Selected base:** production uses a PHP HTTP adapter with the official MCP PHP SDK. VK method/token-handling patterns were adapted from the MIT donor [vk-mcp-server](https://github.com/alena-lenom-fork/vk-mcp-server); attribution is preserved in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The donor itself is stdio-only and is not directly deployed as the remote endpoint. Other forks are references only when a concrete coverage gap requires them.
 
 
 ## Current local prototype
@@ -51,7 +44,7 @@ Local validation on macOS: `npm test` passed all 6 Node tests. The Node stdio im
 
 ## PHP HTTP endpoint (REG.RU Host 0; deployed release)
 
-`public/mcp.php` uses the official experimental [mcp/sdk](https://github.com/modelcontextprotocol/php-sdk) (Apache-2.0), with `nyholm/psr7` as its PSR-7/17 implementation. There is no application framework or custom MCP protocol implementation. `php/tools.json` mirrors the seven read-only Node tools and the parity test detects drift. PHP adds `vk_wall_post` and `vk_wall_edit` through a separate strict allowlist, with target IDs fixed in server configuration. Community publishing uses `VK_COMMUNITY_TOKEN`; personal publishing and both edit targets use `VK_USER_TOKEN`. Read requests may retry rate limits; writes never retry after an uncertain response. There is no delete tool. Tool arguments never accept credentials or arbitrary owner IDs.
+`public/mcp.php` uses the official experimental [mcp/sdk](https://github.com/modelcontextprotocol/php-sdk) (Apache-2.0), with `nyholm/psr7` as its PSR-7/17 implementation. There is no application framework or custom MCP protocol implementation. `php/tools.json` mirrors the seven Node prototype reads. The deployed PHP endpoint adds `vk_wall_post` and `vk_wall_edit`; reads are restricted to configured personal/community IDs, and write targets are fixed in server configuration. This is the current base, not yet full social coverage. Community publishing uses `VK_COMMUNITY_TOKEN`; personal publishing and both edit targets use `VK_USER_TOKEN`. Personal-wall reads prefer `VK_USER_TOKEN`, public community reads prefer `VK_SERVICE_KEY`, and read-only fallback occurs only on VK wrong-token-kind errors 27/1051. Statistics require `VK_USER_TOKEN`. Read requests may retry rate limits; writes never retry after an uncertain response. The current PHP release exposes no delete, comment, messaging, reaction or attachment-upload tools yet. Tool arguments never accept credentials or IDs outside configured targets.
 
 Requirements: PHP 8.4, Composer 2, cURL/JSON/OpenSSL support, and a private writable session directory outside the web document root (mode 0700). File sessions survive separate PHP requests and expire after ten minutes. Provision these server-side environment variables using private hosting configuration, never query parameters or public files:
 
@@ -81,19 +74,19 @@ The smoke test starts and stops temporary PHP HTTP listeners with isolated envir
 
 ## Roadmap
 
-1. Audit donors: source, license, maintenance, transport, security and actual VK API coverage.
-2. Keep a strict method allowlist; restrict post/edit to configured walls, route tokens by target, and verify writes with mock responses.
-3. Verify lawful VK ID/OAuth or service-key capabilities with real, redacted API evidence.
-4. Implement a secured remote MCP endpoint with HTTPS, access control, and server-side secret storage.
-5. Verify actual tool discovery and data reads from ChatGPT.
-6. Build analytics from confirmed metrics, with pagination, coverage and period-comparability checks.
-7. Verify failures, limits, data integrity, secret protection and reproducible end-to-end results.
+1. Bind every read to the configured personal page or community; route tokens by API method and account context, with fallback only for documented token-type errors.
+2. Use the owner's existing credentials from private server configuration and verify wall/profile/statistics capabilities with redacted live evidence.
+3. Map common social tasks to official VK API methods and the selected donor: posts/media, comments/replies, community conversations, reactions/reposts, and supported community actions.
+4. Adapt the donor's working tools into the secured PHP HTTP MCP while keeping an explicit allowlist and target ownership checks. Never expose arbitrary VK methods.
+5. Connect through the user's existing ChatGPT MCP path and verify tools/list plus real reads and explicitly requested writes.
+6. Build analytics with full pagination, coverage tracking, period comparisons, and clear separation between VK values and derived metrics.
+7. Verify errors, limits, idempotency, destructive-action handling, secret protection, and reproducible end-to-end behavior.
 
 Each milestone is complete only with evidence (specific commit, test/CI run, VK API result or MCP/ChatGPT runtime result). A successful build alone does not prove integration.
 
 ## Security and boundaries
 
-Reads remain available; publishing and editing require an explicit tool call and are limited to the configured personal/community wall. Deleting and messaging are not exposed. Do not scrape around VK restrictions or make unapproved production/DNS/credential changes. Do not place VK tokens, credentials, or personal/private datasets in Git, issue comments, logs, test fixtures or reports. Do not use third-party app identifiers or gray-area OAuth flows as a shortcut.
+Read/write tools must stay limited to the owner's configured personal page and community. Publishing/editing and other requested actions use the correct target-bound token; destructive actions require explicit owner instruction. Do not scrape around VK restrictions or make unapproved production/DNS/credential changes. Do not place VK tokens, credentials, or personal/private datasets in Git, issue comments, logs, test fixtures or reports. Do not use third-party app identifiers or gray-area OAuth flows as a shortcut.
 
 The repository is independent of SAPI Control Center and Automation Platform.
 

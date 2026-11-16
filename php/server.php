@@ -45,7 +45,7 @@ function buildServer(VkClient $client, string $sessionDirectory): Server
                         );
                         $result = $this->client->call($method, $params, $target);
                     } else {
-                        [$method, $params] = ReadOnlyTools::resolve($this->name, $arguments);
+                        [$method, $params] = ReadOnlyTools::resolve(\n                            $this->name,\n                            $arguments,\n                            getenv('VK_PERSONAL_OWNER_ID') ?: null,\n                            getenv('VK_COMMUNITY_ID') ?: null,\n                        );
                         $result = $this->client->call($method, $params);
                     }
                     return new CallToolResult([new TextContent(json_encode($result, JSON_THROW_ON_ERROR))]);
