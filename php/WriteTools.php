@@ -36,7 +36,7 @@ final class WriteTools
                 ],
             ],
             [
-                'name' => 'vk_wall_comment_create',
+                'name' => 'vk_wall_create_comment',
                 'description' => 'Add a comment or reply on a post on the configured personal or community wall.',
                 'inputSchema' => [
                     'type' => 'object',
@@ -88,7 +88,7 @@ final class WriteTools
             $ownerId = -(int) $communityId;
         }
 
-        if ($name === 'vk_wall_comment_create') {
+        if ($name === 'vk_wall_create_comment') {
             $postId = $args['post_id'] ?? null;
             if (!is_int($postId) || $postId < 1 || $postId > 2147483647) {
                 throw new \InvalidArgumentException('Invalid post_id');

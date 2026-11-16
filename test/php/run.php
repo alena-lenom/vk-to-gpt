@@ -56,10 +56,10 @@ $writeClient = new VkClient('service-token','user-token',function($url,$body) us
 },null,'community-token');
 check($writeClient->call('wall.post',['owner_id'=>-456,'message'=>'Text','random_id'=>8,'from_group'=>1],'community')===['post_id'=>9]);
 check($writeRequests[0][1]['access_token']==='community-token' && $writeRequests[0][1]['owner_id']==='-456');
-[$method,$params,$target] = WriteTools::resolve('vk_wall_comment_create',['target'=>'community','post_id'=>9,'message'=>'Reply','reply_to_comment'=>4],'123','456');
+[$method,$params,$target] = WriteTools::resolve('vk_wall_create_comment',['target'=>'community','post_id'=>9,'message'=>'Reply','reply_to_comment'=>4],'123','456');
 check($method==='wall.createComment' && $target==='community' && $params['owner_id']===-456 && $params['post_id']===9 && $params['reply_to_comment']===4 && strlen($params['guid'])===32);
-check(WriteTools::resolve('vk_wall_comment_create',['target'=>'personal','post_id'=>9,'message'=>'Comment'],'123','456')[2]==='personal');
-rejects(fn()=>WriteTools::resolve('vk_wall_comment_create',['target'=>'community','post_id'=>9,'message'=>'x','reply_to_comment'=>'4'],'123','456'),'reply_to_comment');
+check(WriteTools::resolve('vk_wall_create_comment',['target'=>'personal','post_id'=>9,'message'=>'Comment'],'123','456')[2]==='personal');
+rejects(fn()=>WriteTools::resolve('vk_wall_create_comment',['target'=>'community','post_id'=>9,'message'=>'x','reply_to_comment'=>'4'],'123','456'),'reply_to_comment');
 $writeClient->call('wall.createComment',['owner_id'=>-456,'post_id'=>9,'message'=>'Reply','guid'=>'g'],'community');
 check($writeRequests[2][1]['access_token']==='community-token' && $writeRequests[2][1]['owner_id']==='-456' && $writeRequests[2][1]['post_id']==='9');
 $writeClient->call('wall.edit',['owner_id'=>123,'post_id'=>9,'message'=>'Edit'],'personal');
