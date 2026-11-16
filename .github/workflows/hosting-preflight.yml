@@ -61,3 +61,15 @@ jobs:
           else
             echo "observed_host_key=unavailable"
           fi
+
+      - name: Verify read-only SSH login and key authorization
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+        run: |
+          set -euo pipefail
+          ssh-keygen -F "$PROD_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
+          actual=$(ssh-keygen -y -P "" -f "$HOME/.ssh/id_ed25519" | ssh-keygen -lf - | awk '{print $2}')
+          test "$actual" = 'SHA256:cg+i9bf8l22XOeOAmiDij7ho+/C2n1rKmZqtwDju350'
+          echo 'ci_private_matches_expected_public=yes'
+          ssh -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o LogLevel=ERROR -i "$HOME/.ssh/id_ed25519" "$PROD_USER@$PROD_HOST" 'set -eu; pins=$(ssh-keygen -lf "$HOME/.ssh/authorized_keys"); printf "%s\n" "$pins" | grep -q "SHA256:cg+i9bf8l22XOeOAmiDij7ho+/C2n1rKmZqtwDju350"; if printf "%s\n" "$pins" | grep -q "SHA256:LYyN/ZOIDN1AuAM+LZdECt2kDhUjPoqpyh8lYimWxBs"; then exit 1; fi; printf "ssh_login=ok\nci_public_authorized=yes\nexposed_public_revoked=yes\n"'
