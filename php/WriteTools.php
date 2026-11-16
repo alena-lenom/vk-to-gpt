@@ -35,6 +35,21 @@ final class WriteTools
                     'additionalProperties' => false,
                 ],
             ],
+            [
+                'name' => 'vk_wall_comment_create',
+                'description' => 'Add a comment or reply on a post on the configured personal or community wall.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'properties' => [
+                        'target' => ['type' => 'string', 'enum' => ['personal', 'community']],
+                        'post_id' => ['type' => 'integer', 'minimum' => 1],
+                        'message' => ['type' => 'string', 'minLength' => 1, 'maxLength' => 16000],
+                        'reply_to_comment' => ['type' => 'integer', 'minimum' => 1],
+                    ],
+                    'required' => ['target', 'post_id', 'message'],
+                    'additionalProperties' => false,
+                ],
+            ],
         ];
     }
 
@@ -71,6 +86,27 @@ final class WriteTools
                 throw new \InvalidArgumentException('Invalid community ID');
             }
             $ownerId = -(int) $communityId;
+        }
+
+        if ($name === 'vk_wall_comment_create') {
+            $postId = $args['post_id'] ?? null;
+            if (!is_int($postId) || $postId < 1 || $postId > 2147483647) {
+                throw new \InvalidArgumentException('Invalid post_id');
+            }
+            $params = [
+                'owner_id' => $ownerId,
+                'post_id' => $postId,
+                'message' => trim($message),
+                'guid' => bin2hex(random_bytes(16)),
+            ];
+            if (array_key_exists('reply_to_comment', $args)) {
+                $replyTo = $args['reply_to_comment'];
+                if (!is_int($replyTo) || $replyTo < 1 || $replyTo > 2147483647) {
+                    throw new \InvalidArgumentException('Invalid reply_to_comment');
+                }
+                $params['reply_to_comment'] = $replyTo;
+            }
+            return ['wall.createComment', $params, $target];
         }
 
         if ($name === 'vk_wall_post') {

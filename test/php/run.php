@@ -40,7 +40,7 @@ rejects(fn()=>Tools::resolve('vk_wall_get_by_id',['posts'=>'1_2;wall.post']),'po
 rejects(fn()=>Tools::resolve('vk_wall_get',['owner_id'=>-999]),'Target is not configured');
 rejects(fn()=>Tools::resolve('vk_users_get',['user_ids'=>'2']),'Target is not configured');
 rejects(fn()=>Tools::resolve('vk_wall_get_by_id',['posts'=>'-2_3,1_4']),'one configured wall');
-check(count(WriteTools::definitions()) === 2);
+check(count(WriteTools::definitions()) === 3);
 check(WriteTools::resolve('vk_wall_post',['target'=>'personal','message'=>' Hello '],'123','456')[0] === 'wall.post');
 [$method,$params,$target] = WriteTools::resolve('vk_wall_post',['target'=>'community','message'=>'Text'],'123','456');
 check($method==='wall.post' && $target==='community' && $params['owner_id']===-456 && $params['from_group']===1);
@@ -56,8 +56,14 @@ $writeClient = new VkClient('service-token','user-token',function($url,$body) us
 },null,'community-token');
 check($writeClient->call('wall.post',['owner_id'=>-456,'message'=>'Text','random_id'=>8,'from_group'=>1],'community')===['post_id'=>9]);
 check($writeRequests[0][1]['access_token']==='community-token' && $writeRequests[0][1]['owner_id']==='-456');
+[$method,$params,$target] = WriteTools::resolve('vk_wall_comment_create',['target'=>'community','post_id'=>9,'message'=>'Reply','reply_to_comment'=>4],'123','456');
+check($method==='wall.createComment' && $target==='community' && $params['owner_id']===-456 && $params['post_id']===9 && $params['reply_to_comment']===4 && strlen($params['guid'])===32);
+check(WriteTools::resolve('vk_wall_comment_create',['target'=>'personal','post_id'=>9,'message'=>'Comment'],'123','456')[2]==='personal');
+rejects(fn()=>WriteTools::resolve('vk_wall_comment_create',['target'=>'community','post_id'=>9,'message'=>'x','reply_to_comment'=>'4'],'123','456'),'reply_to_comment');
+$writeClient->call('wall.createComment',['owner_id'=>-456,'post_id'=>9,'message'=>'Reply','guid'=>'g'],'community');
+check($writeRequests[2][1]['access_token']==='community-token' && $writeRequests[2][1]['owner_id']==='-456' && $writeRequests[2][1]['post_id']==='9');
 $writeClient->call('wall.edit',['owner_id'=>123,'post_id'=>9,'message'=>'Edit'],'personal');
-check($writeRequests[1][1]['access_token']==='user-token' && $writeRequests[1][1]['owner_id']==='123');
+check($writeRequests[3][1]['access_token']==='user-token' && $writeRequests[3][1]['owner_id']==='123');
 $writeAttempts=0;
 $writeLimited=new VkClient('service','user',function() use (&$writeAttempts) { ++$writeAttempts; return [200,'{"error":{"error_code":6}}']; },function(){},'community');
 rejects(fn()=>$writeLimited->call('wall.post',['owner_id'=>-1,'message'=>'x'],'community'),'error 6');

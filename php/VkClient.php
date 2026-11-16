@@ -17,7 +17,7 @@ final class VkClient
         'users.get', 'groups.getById', 'wall.get', 'wall.getById',
         'wall.getComments', 'stats.get', 'stats.getPostReach',
     ];
-    private const WRITES = ['wall.post', 'wall.edit'];
+    private const WRITES = ['wall.post', 'wall.edit', 'wall.createComment'];
     private const FALLBACK_ERRORS = [27, 1051];
 
     public function __construct(
@@ -41,7 +41,7 @@ final class VkClient
         $tokens = $this->tokenCandidates($method, $params, $writeTarget, $isWrite);
         if (!$tokens) {
             $required = match (true) {
-                $isWrite && $method === 'wall.post' && $writeTarget === 'community' => 'VK_COMMUNITY_TOKEN',
+                $isWrite && in_array($method, ['wall.post', 'wall.createComment'], true) && $writeTarget === 'community' => 'VK_COMMUNITY_TOKEN',
                 $isWrite, in_array($method, ['stats.get', 'stats.getPostReach'], true) => 'VK_USER_TOKEN',
                 $method === 'groups.getById' => 'VK_SERVICE_KEY, VK_USER_TOKEN, or VK_COMMUNITY_TOKEN',
                 default => 'VK_SERVICE_KEY or VK_USER_TOKEN',
@@ -65,7 +65,7 @@ final class VkClient
     private function tokenCandidates(string $method, array $params, ?string $writeTarget, bool $isWrite): array
     {
         if ($isWrite) {
-            $token = $method === 'wall.post' && $writeTarget === 'community' ? $this->communityToken : $this->userToken;
+            $token = in_array($method, ['wall.post', 'wall.createComment'], true) && $writeTarget === 'community' ? $this->communityToken : $this->userToken;
             return $token ? [$token] : [];
         }
         if (in_array($method, ['stats.get', 'stats.getPostReach'], true)) {
