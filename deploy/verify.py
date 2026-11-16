@@ -1,6 +1,7 @@
 """Verify the deployed transport; no VK calls and no secret output."""
 import hashlib, json, pathlib, sys, urllib.request, urllib.error
 BASE = 'https://vk.tattoomystery.ru'
+EXPECTED_WRITE_TOOLS = ["vk_wall_post", "vk_wall_edit", "vk_wall_create_comment"]
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs): return None
 opener = urllib.request.build_opener(NoRedirect)
@@ -43,7 +44,7 @@ def main():
         status,_,body=request('/mcp',{'jsonrpc':'2.0','id':2,'method':'tools/list'},token,session)
         check(status==200,'tools/list HTTP')
         expected=json.loads((pathlib.Path(__file__).resolve().parents[1]/'php/tools.json').read_text())
-        check([t['name'] for t in rpc(body)['result']['tools']]==[t['name'] for t in expected]+['vk_wall_post','vk_wall_edit'],'tools/list contract')
+        check([t['name'] for t in rpc(body)['result']['tools']]==[t['name'] for t in expected]+EXPECTED_WRITE_TOOLS,'tools/list contract')
     finally: request('/mcp',token=token,session=session,method='DELETE')
     for path in ['/composer.json','/vendor/autoload.php','/php/server.php','/shared/config.php']:
         check(request(path)[0] in [403,404],'private path access')
