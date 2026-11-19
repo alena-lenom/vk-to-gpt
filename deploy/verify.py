@@ -32,8 +32,19 @@ def main():
     token=sys.stdin.read().strip()
     check(len(token)>=32,'private bearer configuration')
     check(request('/mcp')[0]==401,'unauthenticated request')
-    check(request('/mcp',token='incorrect-test-token')[0]==401,'invalid bearer')
+    wrong_bearer_status=request('/mcp',token='incorrect-test-token')[0]
+    check(wrong_bearer_status==401,f'invalid bearer HTTP {wrong_bearer_status}')
     check(request('/mcp',token=token,origin=True)[0]==403,'Origin rejection')
+    status,_,body=request('/.well-known/oauth-protected-resource')
+    try: resource=json.loads(body)
+    except (json.JSONDecodeError,UnicodeDecodeError): raise RuntimeError(f'protected-resource metadata JSON HTTP {status}')
+    check(status==200 and resource.get('resource')==BASE and resource.get('authorization_servers')==[BASE],'OAuth protected-resource metadata')
+    status,_,body=request('/.well-known/oauth-authorization-server')
+    try: metadata=json.loads(body)
+    except (json.JSONDecodeError,UnicodeDecodeError): raise RuntimeError(f'authorization-server metadata JSON HTTP {status}')
+    check(status==200 and metadata.get('issuer')==BASE and metadata.get('code_challenge_methods_supported')==['S256']
+          and metadata.get('authorization_response_iss_parameter_supported') is True
+          and metadata.get('registration_endpoint')==BASE+'/oauth/register','OAuth authorization metadata')
     init={'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'github-deploy-check','version':'1'}}}
     status,headers,body=request('/mcp',init,token)
     check(status==200 and 'result' in rpc(body),'initialize')
@@ -48,7 +59,7 @@ def main():
     finally: request('/mcp',token=token,session=session,method='DELETE')
     for path in ['/composer.json','/vendor/autoload.php','/php/server.php','/shared/config.php']:
         check(request(path)[0] in [403,404],'private path access')
-    print('https_authentication=ok\nhttps_initialize_tools_list=ok\nprivate_paths=protected\nhomepage=preserved\nvk_api_calls=none')
+    print('https_authentication=ok\noauth_discovery=ok\nhttps_initialize_tools_list=ok\nprivate_paths=protected\nhomepage=preserved\nvk_api_calls=none')
 if __name__=='__main__':
     try: main()
     except Exception as e:

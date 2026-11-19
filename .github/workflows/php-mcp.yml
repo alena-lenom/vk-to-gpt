@@ -6,6 +6,8 @@ on:
       - "php/**"
       - "public/**"
       - "test/php/**"
+      - "deploy/update-read-diagnostics.sh"
+      - ".github/workflows/prepare-production.yml"
       - ".github/workflows/php-mcp.yml"
   pull_request:
     paths:
@@ -13,6 +15,8 @@ on:
       - "php/**"
       - "public/**"
       - "test/php/**"
+      - "deploy/update-read-diagnostics.sh"
+      - ".github/workflows/prepare-production.yml"
       - ".github/workflows/php-mcp.yml"
 permissions:
   contents: read
@@ -26,7 +30,7 @@ jobs:
         with:
           php-version: "8.4"
           tools: composer:v2
-          extensions: curl, fileinfo, json, openssl
+          extensions: curl, fileinfo, json, openssl, mbstring, pdo_sqlite, sqlite3
           coverage: none
       - uses: actions/setup-node@v4
         with:
@@ -38,3 +42,4 @@ jobs:
       - run: composer test
       - run: node test/php/contract.mjs
       - run: python3 -B test/php/smoke_http.py
+      - run: bash test/php/update_read_diagnostics.sh
