@@ -25,8 +25,9 @@ export class VkClient {
 
   async call(method, params = {}) {
     if (!Object.hasOwn(READ_METHODS, method)) throw new Error('Read-only policy: VK method blocked');
-    const token = READ_METHODS[method] === 'stats' ? this.userToken : (this.serviceKey || this.userToken);
-    if (!token) throw new Error(READ_METHODS[method] === 'stats'
+    const kind = READ_METHODS[method];
+    const primary = kind === 'stats' ? this.userToken : (this.serviceKey || this.userToken);
+    if (!primary) throw new Error(kind === 'stats'
       ? 'VK_USER_TOKEN is not configured; statistics require permitted user authorization'
       : 'VK_SERVICE_KEY or VK_USER_TOKEN is not configured');
     const clean = {};
@@ -34,30 +35,49 @@ export class VkClient {
       if (key === 'access_token' || key === 'v' || key === 'method') continue;
       if (value !== undefined && value !== null) clean[key] = value;
     }
-    for (let attempt = 0; attempt < 4; attempt++) {
-      let response;
-      try {
-        response = await this.fetcher(API + '/' + method, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ ...clean, access_token: token, v: VK_API_VERSION }),
-          signal: AbortSignal.timeout(30000),
-        });
-      } catch (error) {
-        if (error.name === 'TimeoutError' || error.name === 'AbortError') throw new Error('VK API request timed out');
+    const request = async (token) => {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        let response;
+        try {
+          response = await this.fetcher(API + '/' + method, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ ...clean, access_token: token, v: VK_API_VERSION }),
+            signal: AbortSignal.timeout(30000),
+          });
+        } catch (error) {
+          if (error.name === 'TimeoutError' || error.name === 'AbortError') throw new Error('VK API request timed out');
+          throw error;
+        }
+        if (!response.ok) throw new Error('VK API HTTP error ' + response.status);
+        const payload = await response.json();
+        if (!payload.error) return payload.response;
+        const code = payload.error.error_code;
+        if (code === 6 && attempt < 3) {
+          await this.sleepFn(500 * 2 ** attempt);
+          continue;
+        }
+        // Never expose VK response request_params or error_msg (they may include secrets).
+        const error = new Error('VK API error ' + code + ' for ' + method +
+          (code === 27 || code === 28 || code === 1051
+            ? ' (method unavailable for this token type)'
+            : code === 7 || code === 15 || code === 203
+              ? ' (permission or privacy restriction)'
+              : ' (request failed)'));
+        error.vkCode = code;
         throw error;
       }
-      if (!response.ok) throw new Error('VK API HTTP error ' + response.status);
-      const payload = await response.json();
-      if (!payload.error) return payload.response;
-      const code = payload.error.error_code;
-      if (code === 6 && attempt < 3) {
-        await this.sleepFn(500 * 2 ** attempt);
-        continue;
-      }
-      // Never expose VK response request_params (may contain the access token).
-      throw new Error('VK API error ' + code + ' (method unavailable, denied, or failed)');
+      throw new Error('VK API retry limit exceeded');
+    };
+    try {
+      return await request(primary);
+    } catch (error) {
+      // Only retry a read with a second token when VK rejected the token type.
+      // Do not retry permission/privacy failures, network errors, or statistics.
+      const fallback = kind === 'public' && primary === this.serviceKey &&
+        this.userToken && this.userToken !== primary && [27, 28, 1051].includes(error.vkCode);
+      if (!fallback) throw error;
+      return request(this.userToken);
     }
-    throw new Error('VK API retry limit exceeded');
   }
 }
