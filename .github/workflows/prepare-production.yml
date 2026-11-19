@@ -8,7 +8,7 @@ on:
         type: string
         required: true
       publish:
-        description: Publish the bounded PHP read adapters after tests
+        description: Publish the guarded VK credential-routing update after tests
         type: boolean
         default: false
       inspect_runtime:
@@ -59,14 +59,14 @@ jobs:
           python3 -B test/php/smoke_http.py
           bash test/php/update_read_diagnostics.sh
           php -l deploy/probe-wall.php
-      - name: Package only the bounded read adapters
+      - name: Package only the bounded credential-routing files
         run: |
           set -eu
           mkdir -p stage/php artifact
-          cp php/VkClient.php php/ReadOnly.php php/tools.json php/server.php php/WallCollector.php php/SapiEventReader.php stage/php/
+          cp php/VkClient.php php/server.php stage/php/
           cp deploy/update-read-diagnostics.sh stage/
           printf '%s\n' "$GITHUB_SHA" > stage/REVISION
-          tar -C stage -czf artifact/diagnostics.tgz php/VkClient.php php/ReadOnly.php php/tools.json php/server.php php/WallCollector.php php/SapiEventReader.php REVISION update-read-diagnostics.sh
+          tar -C stage -czf artifact/diagnostics.tgz php/VkClient.php php/server.php REVISION update-read-diagnostics.sh
           (cd artifact && sha256sum diagnostics.tgz > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
@@ -84,7 +84,7 @@ jobs:
     env:
       PROD_HOST: ${{ secrets.PROD_HOST }}
       PROD_USER: ${{ secrets.PROD_USER }}
-      BASELINE: 8bcff6a73ffe2b9375d75d8f197b3eb4c5c51a6e
+      BASELINE: ce5982a365363c0319cc2b932c38621185f660e8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -131,18 +131,19 @@ jobs:
           trap cleanup EXIT
           scp -q artifact/diagnostics.tgz "$target:$stage/"
           ssh "$target" tar -xzf "$stage/diagnostics.tgz" -C "$stage"
-          for file in VkClient.php ReadOnly.php server.php WallCollector.php SapiEventReader.php; do
+          for file in VkClient.php server.php; do
             ssh "$target" /opt/php/8.4/bin/php -l "$stage/php/$file"
           done
           applying=true
           ssh "$target" bash "$stage/update-read-diagnostics.sh" apply "$app" "$stage" "$BASELINE" "$GITHUB_SHA"
           applied=true
+          [[ $(ssh "$target" cat "$app/REVISION") == "$GITHUB_SHA" ]]
           ssh "$target" /opt/php/8.4/bin/php <<'PHP' | python3 -B deploy/verify.py "$RUNNER_TEMP/home.sha256"
           <?php
           $config = require '/var/www/u3641285/data/vk-to-gpt/shared/config.php';
           echo $config['MCP_BEARER_TOKEN'];
           PHP
-          printf '%s\n' 'Bounded read adapters published. HTTPS, MCP and OAuth discovery verified.' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' 'Guarded VK routing update published. Revision, HTTPS, MCP and OAuth discovery verified.' >> "$GITHUB_STEP_SUMMARY"
       - name: Remove temporary SSH files
         if: always()
         run: rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
