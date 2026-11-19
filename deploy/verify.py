@@ -32,7 +32,8 @@ def main():
     token=sys.stdin.read().strip()
     check(len(token)>=32,'private bearer configuration')
     check(request('/mcp')[0]==401,'unauthenticated request')
-    check(request('/mcp',token='incorrect-test-token')[0]==401,'invalid bearer')
+    wrong_bearer_status=request('/mcp',token='incorrect-test-token')[0]
+    check(wrong_bearer_status==401,f'invalid bearer HTTP {wrong_bearer_status}')
     check(request('/mcp',token=token,origin=True)[0]==403,'Origin rejection')
     status,_,body=request('/.well-known/oauth-protected-resource')
     resource=json.loads(body)
