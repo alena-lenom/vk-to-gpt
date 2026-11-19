@@ -265,8 +265,7 @@ function dispatch(): void
     header('Referrer-Policy: no-referrer');
     $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
     $allowedHost = oauthConfig('MCP_ALLOWED_HOST');
-    if (!is_string($path) || strtolower((string)($_SERVER['HTTP_HOST'] ?? '')) !== strtolower($allowedHost)
-        || (isset($_SERVER['HTTP_ORIGIN']) && $_SERVER['HTTP_ORIGIN'] !== ISSUER)) {
+    if (!is_string($path) || strtolower((string)($_SERVER['HTTP_HOST'] ?? '')) !== strtolower($allowedHost)) {
         emit(response(403, 'Forbidden', 'text/plain; charset=utf-8'));
     }
 
