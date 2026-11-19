@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Guarded update of VK credential routing only; keep OAuth, secrets, and routes untouched.
+# Guarded update of post-counter analytics only; keep OAuth, tokens, routing, and other tools untouched.
 set -euo pipefail
 
 operation=${1:?operation required}
@@ -10,7 +10,7 @@ revision=${5:?revision required}
 
 [[ $baseline =~ ^[0-9a-f]{40}$ && $revision =~ ^[0-9a-f]{40}$ && $baseline != "$revision" ]]
 [[ -d $app && ! -L $app && -d $app/php && ! -L $app/php ]]
-existing=(php/VkClient.php php/server.php REVISION)
+existing=(php/WallCollector.php REVISION)
 for file in "${existing[@]}"; do
     [[ -f $app/$file && ! -L $app/$file ]]
 done
