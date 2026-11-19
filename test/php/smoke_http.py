@@ -84,7 +84,7 @@ with tempfile.TemporaryDirectory(prefix='vk-mcp-') as sessions:
                 body = next(line[5:].strip() for line in body.splitlines() if line.startswith('data:'))
             tool_result = json.loads(body)['result']
             assert tool_result['isError'] is True, tool_result
-            assert tool_result['content'][0]['text'] == 'VK read failed: required VK token is not configured', tool_result
+            assert tool_result['content'][0]['text'] == 'VK read failed: VK_SERVICE_KEY or VK_USER_TOKEN is not configured for wall.get', tool_result
             print('HTTP: missing VK credential produces a safe, distinct read error')
 
         finally:

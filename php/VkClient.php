@@ -5,11 +5,15 @@ namespace VkToGpt;
 
 final class VkApiException extends \RuntimeException
 {
-    public function __construct(public readonly ?int $vkCode)
-    {
+    public function __construct(
+        public readonly ?int $vkCode,
+        public readonly ?string $credentialType = null,
+    ) {
         parent::__construct($vkCode === null ? 'VK API transport or response failure' : 'VK API error '.$vkCode);
     }
 }
+
+final class MissingVkCredentialException extends \RuntimeException {}
 
 final class VkClient
 {
@@ -18,7 +22,31 @@ final class VkClient
         'wall.getComments', 'stats.get', 'stats.getPostReach',
     ];
     private const WRITES = ['wall.post', 'wall.edit', 'wall.createComment'];
-    private const FALLBACK_ERRORS = [27, 28, 1051];
+
+    /**
+     * VKCOM vk-api-schema 5.199 access_token_type, represented as credential
+     * classes configured by this server. Source: https://github.com/VKCOM/vk-api-schema/tree/333481bd082ad747d4873ef4a77f9247097eeef0 .
+     * Target-specific policy chooses one configured credential from only the
+     * types accepted by the method.
+     */
+    private const METHOD_TOKEN_TYPES = [
+        'users.get' => ['user', 'group', 'service'],
+        'groups.getById' => ['user', 'group', 'service'],
+        'wall.get' => ['user', 'service'],
+        'wall.getById' => ['user', 'service'],
+        'wall.getComments' => ['user', 'service'],
+        'stats.get' => ['user'],
+        'stats.getPostReach' => ['user'],
+        'wall.post' => ['user'],
+        'wall.edit' => ['user'],
+        'wall.createComment' => ['user', 'group'],
+    ];
+
+    private const ENV_BY_TYPE = [
+        'user' => 'VK_USER_TOKEN',
+        'group' => 'VK_COMMUNITY_TOKEN',
+        'service' => 'VK_SERVICE_KEY',
+    ];
 
     public function __construct(
         private readonly ?string $serviceKey,
@@ -38,64 +66,84 @@ final class VkClient
             throw new \RuntimeException('Write target is required');
         }
 
-        $tokens = $this->tokenCandidates($method, $params, $writeTarget, $isWrite);
-        if (!$tokens) {
-            $required = match (true) {
-                $isWrite && in_array($method, ['wall.post', 'wall.createComment'], true) && $writeTarget === 'community' => 'VK_COMMUNITY_TOKEN',
-                $isWrite, in_array($method, ['stats.get', 'stats.getPostReach'], true) => 'VK_USER_TOKEN',
-                $method === 'groups.getById' => 'VK_SERVICE_KEY, VK_USER_TOKEN, or VK_COMMUNITY_TOKEN',
-                default => 'VK_SERVICE_KEY or VK_USER_TOKEN',
+        [$credentialType, $token] = $this->selectCredential($method, $params, $writeTarget, $isWrite);
+        return $this->request($method, $params, $token, $isWrite, $credentialType);
+    }
+
+    /**
+     * Select exactly one key before making the request. A VK denial never
+     * changes the credential actor; only a method's declared types are eligible.
+     */
+    private function selectCredential(string $method, array $params, ?string $writeTarget, bool $isWrite): array
+    {
+        $allowedTypes = self::METHOD_TOKEN_TYPES[$method] ?? [];
+        if ($isWrite) {
+            $preferredTypes = match ($method) {
+                'wall.post' => $writeTarget === 'community' ? ['group', 'user'] : ['user'],
+                'wall.edit' => ['user'],
+                'wall.createComment' => $writeTarget === 'community' ? ['group', 'user'] : ['user'],
+                default => [],
             };
-            throw new \RuntimeException($required.' is not configured');
+
+            // One SAPI-RES-028 test proved a single text-only community wall.post
+            // with one protected group key on API 5.199. Keep that narrow,
+            // target-bound exception separate from the schema's user-only type.
+            // It does not prove the PHP runtime has the same credential or grant a new write.
+            if ($method === 'wall.post' && $writeTarget === 'community') {
+                $allowedTypes[] = 'group';
+            }
+        } elseif (in_array($method, ['stats.get', 'stats.getPostReach'], true)) {
+            $preferredTypes = ['user'];
+        } elseif (in_array($method, ['wall.get', 'wall.getById', 'wall.getComments'], true)) {
+            $ownerId = $this->wallOwnerId($method, $params);
+            $preferredTypes = $ownerId !== null && $ownerId > 0
+                ? ['user', 'service']
+                : ['service', 'user'];
+        } else {
+            $preferredTypes = ['service', 'user', 'group'];
         }
 
-        foreach ($tokens as $index => $token) {
-            try {
-                return $this->request($method, $params, $token, $isWrite);
-            } catch (VkApiException $error) {
-                if (!$isWrite && isset($tokens[$index + 1]) && in_array($error->vkCode, self::FALLBACK_ERRORS, true)) {
-                    continue;
-                }
-                // Preserve the sanitized numeric VK code for a read-only MCP diagnosis.
-                throw $error;
+        $orderedAllowedTypes = array_values(array_filter(
+            $preferredTypes,
+            static fn (string $type): bool => in_array($type, $allowedTypes, true),
+        ));
+        foreach ($orderedAllowedTypes as $type) {
+            $token = match ($type) {
+                'service' => $this->serviceKey,
+                'user' => $this->userToken,
+                'group' => $this->communityToken,
+                default => null,
+            };
+            if (is_string($token) && $token !== '') {
+                return [$type, $token];
             }
         }
-        throw new \RuntimeException('VK API fallback exhausted');
+
+        $environmentNames = array_map(
+            static fn (string $type): string => self::ENV_BY_TYPE[$type],
+            $orderedAllowedTypes,
+        );
+        $required = match (count($environmentNames)) {
+            0 => 'no configured credential type is allowed for '.$method,
+            1 => $environmentNames[0],
+            2 => $environmentNames[0].' or '.$environmentNames[1],
+            default => implode(', ', array_slice($environmentNames, 0, -1)).', or '.end($environmentNames),
+        };
+        throw new MissingVkCredentialException($required.' is not configured for '.$method);
     }
 
-    private function tokenCandidates(string $method, array $params, ?string $writeTarget, bool $isWrite): array
+    private function wallOwnerId(string $method, array $params): ?int
     {
-        if ($isWrite) {
-            $token = in_array($method, ['wall.post', 'wall.createComment'], true) && $writeTarget === 'community' ? $this->communityToken : $this->userToken;
-            return $token ? [$token] : [];
-        }
-        if (in_array($method, ['stats.get', 'stats.getPostReach'], true)) {
-            return $this->uniqueTokens([$this->userToken]);
-        }
-        if ($method === 'groups.getById') {
-            return $this->uniqueTokens([$this->serviceKey, $this->userToken, $this->communityToken]);
-        }
-        if ($method === 'users.get') {
-            return $this->uniqueTokens([$this->serviceKey, $this->userToken]);
-        }
-
-        $ownerId = null;
         if (isset($params['owner_id']) && is_int($params['owner_id'])) {
-            $ownerId = $params['owner_id'];
-        } elseif ($method === 'wall.getById' && isset($params['posts']) && is_string($params['posts'])) {
-            $ownerId = (int) explode('_', explode(',', $params['posts'], 2)[0], 2)[0];
+            return $params['owner_id'];
         }
-        return $ownerId !== null && $ownerId > 0
-            ? $this->uniqueTokens([$this->userToken, $this->serviceKey])
-            : $this->uniqueTokens([$this->serviceKey, $this->userToken]);
+        if ($method === 'wall.getById' && isset($params['posts']) && is_string($params['posts'])) {
+            return (int) explode('_', explode(',', $params['posts'], 2)[0], 2)[0];
+        }
+        return null;
     }
 
-    private function uniqueTokens(array $tokens): array
-    {
-        return array_values(array_unique(array_filter($tokens, static fn ($token) => is_string($token) && $token !== '')));
-    }
-
-    private function request(string $method, array $params, string $token, bool $isWrite): mixed
+    private function request(string $method, array $params, string $token, bool $isWrite, string $credentialType): mixed
     {
         unset($params['access_token'], $params['v'], $params['method']);
         $body = http_build_query(array_filter($params, static fn ($value) => $value !== null) + [
@@ -110,13 +158,13 @@ final class VkClient
             } catch (VkApiException $error) {
                 throw $error;
             } catch (\Throwable) {
-                throw new VkApiException(null);
+                throw new VkApiException(null, $credentialType);
             }
             if ($status < 200 || $status >= 300) {
                 throw new \RuntimeException('VK API HTTP error '.(int) $status);
             }
             if (!is_array($payload)) {
-                throw new VkApiException(null);
+                throw new VkApiException(null, $credentialType);
             }
             if (isset($payload['error'])) {
                 $code = $payload['error']['error_code'] ?? null;
@@ -124,10 +172,10 @@ final class VkClient
                     ($this->sleep ?? usleep(...))(500000 * 2 ** $attempt);
                     continue;
                 }
-                throw new VkApiException(is_int($code) ? $code : null);
+                throw new VkApiException(is_int($code) ? $code : null, $credentialType);
             }
             if (!array_key_exists('response', $payload)) {
-                throw new VkApiException(null);
+                throw new VkApiException(null, $credentialType);
             }
             return $payload['response'];
         }

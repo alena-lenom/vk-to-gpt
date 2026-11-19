@@ -89,10 +89,13 @@ check($requests[0]===['https://api.vk.com/method/wall.get',['owner_id'=>'-2','of
 $personalAttempts=[];
 $personalClient=new VkClient('fake-service','fake-user',function($url,$body) use (&$personalAttempts) {
     parse_str($body,$params); $personalAttempts[]=$params['access_token'];
-    return [200,$params['access_token']==='fake-user' ? '{"error":{"error_code":27}}' : '{"response":{"items":[]}}'];
+    return [200,'{"error":{"error_code":27}}'];
 });
-check($personalClient->call('wall.get',['owner_id'=>1])===['items'=>[]]);
-check($personalAttempts===['fake-user','fake-service']);
+$personalError=null;
+try { $personalClient->call('wall.get',['owner_id'=>1]); }
+catch (VkToGpt\VkApiException $e) { $personalError=$e; }
+check($personalAttempts===['fake-user']);
+check($personalError instanceof VkToGpt\VkApiException && $personalError->credentialType==='user' && $personalError->vkCode===27);
 $deniedAttempts=0;
 $deniedClient=new VkClient('fake-service','fake-user',function() use (&$deniedAttempts) {
     ++$deniedAttempts; return [200,'{"error":{"error_code":15}}'];
@@ -101,7 +104,48 @@ rejects(fn()=>$deniedClient->call('wall.get',['owner_id'=>1]),'error 15');
 check($deniedAttempts===1);
 
 
+
 $client->call('stats.get'); check($requests[2][1]['access_token']==='fake-user');
+
+// The schema map and target preference select one credential class before any request.
+$mappedActors=[];
+$mappedClient=new VkClient('service-key','user-token',function($url,$body) use (&$mappedActors) {
+    parse_str($body,$params);
+    $mappedActors[]=[basename(parse_url($url,PHP_URL_PATH)),$params['access_token']];
+    return [200,'{"response":[]}'];
+},null,'community-key');
+$mappedClient->call('users.get',['user_ids'=>'1']);
+$mappedClient->call('groups.getById',['group_ids'=>'2']);
+$mappedClient->call('wall.get',['owner_id'=>1]);
+$mappedClient->call('wall.get',['owner_id'=>-2]);
+$mappedClient->call('wall.getById',['posts'=>'1_3']);
+$mappedClient->call('wall.getById',['posts'=>'-2_3']);
+$mappedClient->call('wall.getComments',['owner_id'=>1,'post_id'=>3]);
+$mappedClient->call('wall.getComments',['owner_id'=>-2,'post_id'=>3]);
+$mappedClient->call('stats.get',['group_id'=>2]);
+$mappedClient->call('stats.getPostReach',['owner_id'=>-2,'post_ids'=>'3']);
+$mappedClient->call('wall.post',['owner_id'=>1,'message'=>'x'],'personal');
+$mappedClient->call('wall.post',['owner_id'=>-2,'message'=>'x'],'community');
+$mappedClient->call('wall.edit',['owner_id'=>1,'post_id'=>3,'message'=>'x'],'personal');
+$mappedClient->call('wall.createComment',['owner_id'=>1,'post_id'=>3,'message'=>'x'],'personal');
+$mappedClient->call('wall.createComment',['owner_id'=>-2,'post_id'=>3,'message'=>'x'],'community');
+check($mappedActors === [
+    ['users.get','service-key'],
+    ['groups.getById','service-key'],
+    ['wall.get','user-token'],
+    ['wall.get','service-key'],
+    ['wall.getById','user-token'],
+    ['wall.getById','service-key'],
+    ['wall.getComments','user-token'],
+    ['wall.getComments','service-key'],
+    ['stats.get','user-token'],
+    ['stats.getPostReach','user-token'],
+    ['wall.post','user-token'],
+    ['wall.post','community-key'],
+    ['wall.edit','user-token'],
+    ['wall.createComment','user-token'],
+    ['wall.createComment','community-key'],
+]);
 foreach (['wall.delete','messages.send','__proto__','wall.get/../wall.post'] as $method) rejects(fn()=>$client->call($method),'blocked');
 check(count($requests)===3);
 rejects(fn()=>(new VkClient('fake',null))->call('stats.get'),'VK_USER_TOKEN');
@@ -128,19 +172,22 @@ $preferredFetch=function($url,$body) use (&$preferred) {parse_str($body,$params)
 (new VkClient('fake-service','fake-user',$preferredFetch,communityToken:'fake-community'))->call('groups.getById');
 (new VkClient(null,'fake-user',$preferredFetch,communityToken:'fake-community'))->call('groups.getById');
 check($preferred===['fake-service','fake-user']);
-// Token-type error 28 may be retried with an already configured second token.
+// A VK error never switches the call to another credential actor.
 $typeAttempts=[];
 $typeClient=new VkClient('fake-service','fake-user',function($url,$body) use (&$typeAttempts) {
     parse_str($body,$params); $typeAttempts[]=$params['access_token'];
-    return [200,$params['access_token']==='fake-service'
-        ? '{"error":{"error_code":28,"error_msg":"do not print secret"}}'
-        : '{"response":[{"id":3}]}'];
+    return [200,'{"error":{"error_code":28,"error_msg":"do not print secret"}}'];
 });
-check($typeClient->call('wall.getById',['posts'=>'-2_3']) === [['id'=>3]]);
-check($typeAttempts === ['fake-service','fake-user']);
+$typeError=null;
+try { $typeClient->call('wall.getById',['posts'=>'-2_3']); }
+catch (VkToGpt\VkApiException $e) { $typeError=$e; }
+check($typeAttempts === ['fake-service']);
+check($typeError instanceof VkToGpt\VkApiException && $typeError->credentialType==='service' && $typeError->vkCode===28);
 
-// A final VK error keeps only the numeric code, not VK's potentially sensitive payload.
-$lastError=new VkClient('fake-service',null,function() {
+// A 1051 keeps the selected public-read credential visible without leaking VK's payload.
+$lastErrorAttempts=[];
+$lastError=new VkClient('fake-service','fake-user',function($url,$body) use (&$lastErrorAttempts) {
+    parse_str($body,$params); $lastErrorAttempts[]=$params['access_token'];
     return [200,'{"error":{"error_code":1051,"error_msg":"private-secret","request_params":[{"key":"access_token","value":"private-secret"}]}}'];
 });
 try {
@@ -148,6 +195,7 @@ try {
     throw new LogicException('Expected VK error');
 } catch (VkToGpt\VkApiException $e) {
     check($e->vkCode===1051 && $e->getMessage()==='VK API error 1051');
+    check($e->credentialType==='service' && $lastErrorAttempts===['fake-service']);
     check(!str_contains($e->getMessage(),'private-secret'));
 }
 

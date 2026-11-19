@@ -64,13 +64,21 @@ function buildServer(VkClient $client, string $sessionDirectory): Server
                     return CallToolResult::error([new TextContent($error->getMessage())]);
                 } catch (SapiEventSourceException $error) {
                     return CallToolResult::error([new TextContent('SAPI Callback read unavailable (invalid source or provenance)')]);
+                } catch (MissingVkCredentialException $error) {
+                    // Report the selected credential requirement, never a credential value.
+                    return CallToolResult::error([new TextContent($isWrite
+                        ? 'VK write failed (unconfigured, unavailable, denied, or failed; check the wall before retrying)'
+                        : 'VK read failed: '.$error->getMessage())]);
                 } catch (VkApiException $error) {
                     // Writes may already have happened: keep their failure opaque and non-retryable.
+                    $actor = in_array($error->credentialType, ['user', 'group', 'service'], true)
+                        ? ' using '.$error->credentialType.' credential'
+                        : '';
                     return CallToolResult::error([new TextContent($isWrite
                         ? 'VK write failed (unconfigured, unavailable, denied, or failed; check the wall before retrying)'
                         : ($error->vkCode === null
-                            ? 'VK read failed (transport or malformed API response)'
-                            : 'VK read failed: '.$method.' returned VK API error '.$error->vkCode))]);
+                            ? 'VK read failed (transport or malformed API response)'.$actor
+                            : 'VK read failed: '.$method.' returned VK API error '.$error->vkCode.$actor))]);
                 } catch (\Throwable $error) {
                     $missingToken = !$isWrite && in_array($error->getMessage(), [
                         'VK_USER_TOKEN is not configured',
