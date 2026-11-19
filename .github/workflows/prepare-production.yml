@@ -5,8 +5,12 @@ on:
     branches: [feat/php-mcp-http]
     paths:
       - .github/workflows/prepare-production.yml
+      - composer.json
       - composer.lock
       - "deploy/**"
+      - "php/**"
+      - "public/**"
+      - "test/**"
   workflow_dispatch:
     inputs:
       publish:
@@ -31,7 +35,7 @@ jobs:
         with:
           php-version: "8.4"
           tools: composer:v2
-          extensions: curl, fileinfo, json, openssl, mbstring
+          extensions: curl, fileinfo, json, openssl, mbstring, pdo_sqlite, sqlite3
           coverage: none
       - uses: actions/setup-node@v4
         with:
@@ -47,6 +51,9 @@ jobs:
         run: |
           set -eu
           php -l deploy/mcp.php
+          php -l deploy/oauth.php
+          php -l deploy/provision-oauth.php
+          php -l public/oauth.php
           composer test
           node test/php/contract.mjs
           node --test test/read-only.test.js
@@ -58,7 +65,7 @@ jobs:
           cp composer.json composer.lock THIRD_PARTY_NOTICES.md artifact/release/
           cp -R php public vendor third_party artifact/release/
           mkdir artifact/release/deploy
-          cp deploy/mcp.php artifact/release/deploy/
+          cp deploy/mcp.php deploy/oauth.php deploy/provision-oauth.php artifact/release/deploy/
           printf '%s\n' "$GITHUB_SHA" > artifact/release/REVISION
           tar -C artifact/release -czf artifact/vk-to-gpt-php.tar.gz .
           (cd artifact && sha256sum vk-to-gpt-php.tar.gz > SHA256SUMS)
@@ -98,7 +105,7 @@ jobs:
           ssh -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o LogLevel=ERROR -i "$HOME/.ssh/id_ed25519" "$PROD_USER@$PROD_HOST" sh -s <<'REMOTE' | tee "$RUNNER_TEMP/hosting-readiness.txt"
           set -eu
           test -x /opt/php/8.4/bin/php
-          /opt/php/8.4/bin/php -r 'if (PHP_VERSION_ID < 80400 || PHP_VERSION_ID >= 80500) exit(1); foreach (["curl","json","openssl","mbstring","fileinfo"] as $e) if (!extension_loaded($e)) exit(1); echo "hosting_php84_extensions=ok\n";'
+          /opt/php/8.4/bin/php -r 'if (PHP_VERSION_ID < 80400 || PHP_VERSION_ID >= 80500) exit(1); foreach (["curl","json","openssl","mbstring","fileinfo","pdo_sqlite","sqlite3"] as $e) if (!extension_loaded($e)) exit(1); echo "hosting_php84_extensions=ok\n";'
           p=/var/www/u3641285/data/www/vk.tattoomystery.ru
           test -d "$p"
           test -w "$p"
@@ -163,7 +170,7 @@ jobs:
           test ! -L "$site/mcp.php" && test ! -L "$site/.htaccess"
           if test -f "$site/mcp.php"; then grep -q 'Managed VK to GPT entrypoint' "$site/mcp.php"; fi
           test ! -e "$backup"
-          mkdir -p "$incoming/app" "$backup" "$base/shared/sessions"
+          mkdir -p "$incoming/app" "$backup" "$base/shared/sessions" "$base/shared/oauth/sessions"
           chmod 700 "$base/shared" "$base/shared/sessions" "$base/backups" "$backup"
           tar --no-same-owner -xzf "$incoming/package.tgz" -C "$incoming/app"
           test "$(cat "$incoming/app/REVISION")" = "$2"
@@ -171,6 +178,7 @@ jobs:
           if test ! -e "$base/shared/config.php"; then
             "$php" -r '$c=["MCP_BEARER_TOKEN"=>bin2hex(random_bytes(32)),"MCP_ALLOWED_HOST"=>"vk.tattoomystery.ru","MCP_SESSION_DIR"=>$argv[1]."/shared/sessions"]; file_put_contents($argv[1]."/shared/config.php","<?php\nreturn ".var_export($c,true).";\n",LOCK_EX); chmod($argv[1]."/shared/config.php",0600);' "$base"
           fi
+          "$php" "$incoming/app/deploy/provision-oauth.php" "$base" >/dev/null
           "$php" -r '$p=$argv[1]."/shared/config.php"; $c=require $p; if((fileperms($p)&0077)!==0 || !is_array($c) || !is_string($c["MCP_BEARER_TOKEN"]??null) || strlen($c["MCP_BEARER_TOKEN"])<32 || ($c["MCP_ALLOWED_HOST"]??null)!=="vk.tattoomystery.ru" || ($c["MCP_SESSION_DIR"]??null)!==$argv[1]."/shared/sessions") exit(1); require $argv[2]."/vendor/autoload.php";' "$base" "$incoming/app" >/dev/null 2>&1
           sha256sum "$site/index.html" > "$backup/index.sha256"
           for f in mcp.php .htaccess; do if test -f "$site/$f"; then cp -p "$site/$f" "$backup/$f"; fi; done
@@ -184,6 +192,9 @@ jobs:
           RewriteEngine On
           RewriteRule ^ - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
           SetEnvIfNoCase Authorization "(.+)" HTTP_AUTHORIZATION=$1
+          RewriteRule ^\.well-known/oauth-(?:protected-resource(?:/mcp)?|authorization-server)$ oauth.php [L]
+          RewriteRule ^mcp/\.well-known/oauth-protected-resource$ oauth.php [L]
+          RewriteRule ^oauth(?:/.*)?$ oauth.php [L]
           RewriteRule ^mcp/?$ mcp.php [L]
           # END VK TO GPT MCP
           HTACCESS

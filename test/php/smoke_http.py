@@ -10,6 +10,7 @@ import urllib.error
 import urllib.request
 
 root = pathlib.Path(__file__).resolve().parents[2]
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 def request(base, body=None, bearer=None, session=None):
     headers = {'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream'}
@@ -20,7 +21,7 @@ def request(base, body=None, bearer=None, session=None):
         headers['MCP-Protocol-Version'] = '2025-06-18'
     req = urllib.request.Request(base, data=json.dumps(body).encode() if body else None, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=5) as response:
+        with opener.open(req, timeout=5) as response:
             return response.status, response.headers, response.read().decode()
     except urllib.error.HTTPError as error:
         return error.code, error.headers, error.read().decode()
@@ -46,7 +47,7 @@ with tempfile.TemporaryDirectory(prefix='vk-mcp-') as sessions:
                     time.sleep(.05)
             else:
                 raise RuntimeError('PHP HTTP server did not become ready')
-            assert result[0] == 401, result
+            assert result[0] == 401, (configured, result)
             assert request(base, bearer='wrong')[0] == 401
             if configured != 'local-test-only':
                 assert request(base, bearer='local-test-only')[0] == 401

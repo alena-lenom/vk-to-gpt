@@ -6,9 +6,10 @@
     "php": "~8.4.0",
     "ext-curl": "*",
     "ext-json": "*",
+    "league/oauth2-server": "^9.0",
     "mcp/sdk": "0.9.0",
     "nyholm/psr7": "^1.8"
   },
-  "scripts": { "test": "php test/php/run.php" },
+  "scripts": { "test": "php test/php/run.php && php test/php/oauth_flow.php" },
   "config": { "allow-plugins": false, "sort-packages": true }
 }
