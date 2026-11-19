@@ -24,6 +24,7 @@ if (!in_array($_SERVER['REQUEST_METHOD'], ['POST', 'GET', 'DELETE'], true)) {
 }
 
 try {
+    $stage = 'authorization';
     $authorization = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
     $staticBearer = VkToGpt\authorized(getenv('MCP_BEARER_TOKEN'), $authorization);
     if (!$staticBearer) {
@@ -40,10 +41,13 @@ try {
             }
         }
     }
+    $stage = 'autoload';
     require dirname(__DIR__).'/vendor/autoload.php';
     if (!$staticBearer) {
+        $stage = 'oauth_store';
         require_once dirname(__DIR__).'/php/OAuth.php';
         $store = VkToGpt\OAuth\Store::open((string)getenv('MCP_OAUTH_DB'));
+        $stage = 'oauth_resource_server';
         $resourceServer = VkToGpt\OAuth\resourceServer($store, (string)getenv('MCP_OAUTH_PUBLIC_KEY'));
         $psrFactory = new Psr17Factory();
         $authHeaders = getallheaders() ?: [];
@@ -56,6 +60,7 @@ try {
             header('WWW-Authenticate: Bearer error="invalid_token", resource_metadata="https://vk.tattoomystery.ru/.well-known/oauth-protected-resource"');
             exit;
         }
+        $stage = 'oauth_claims';
         $config = Lcobucci\JWT\Configuration::forAsymmetricSigner(
             new Lcobucci\JWT\Signer\Rsa\Sha256(),
             Lcobucci\JWT\Signer\Key\InMemory::plainText('empty', 'empty'),
@@ -73,6 +78,7 @@ try {
             header('WWW-Authenticate: Bearer error="invalid_token"');
             exit;
         }
+        $stage = 'mcp_body';
         $input = fopen('php://input', 'rb');
         $body = is_resource($input) ? stream_get_contents($input, 65537) : false;
         if (!is_string($body) || strlen($body) > 65536) {
@@ -89,8 +95,10 @@ try {
         }
         $GLOBALS['VK_TO_GPT_MCP_BODY'] = $body;
     }
+    $stage = 'mcp_server';
     require dirname(__DIR__).'/php/server.php';
     // Provision a private directory outside the document root; never use a shared temp directory.
+    $stage = 'mcp_session';
     $sessions = getenv('MCP_SESSION_DIR');
     if (!$sessions || !is_dir($sessions) || !is_writable($sessions)
         || (fileperms($sessions) & 0077) !== 0
@@ -127,6 +135,9 @@ try {
     echo $response->getBody();
 } catch (Throwable) {
     http_response_code(503);
+    if (getenv('VK_TO_GPT_TEST_DIAGNOSTICS') === '1' && isset($stage)) {
+        header('X-VK-to-GPT-Test-Phase: '.$stage);
+    }
     // No exception, configuration, request data or credentials in output/logs.
     echo 'MCP unavailable';
 }

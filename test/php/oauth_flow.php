@@ -106,6 +106,7 @@ try {
         'MCP_SESSION_DIR' => $sessions,
         'MCP_OAUTH_DB' => $directory.'/oauth.sqlite',
         'MCP_OAUTH_PUBLIC_KEY' => $publicPath,
+        'VK_TO_GPT_TEST_DIAGNOSTICS' => '1',
         'VK_SERVICE_KEY' => '', 'VK_USER_TOKEN' => '', 'VK_COMMUNITY_TOKEN' => '',
         'VK_PERSONAL_OWNER_ID' => '', 'VK_COMMUNITY_ID' => '',
     ]);
@@ -127,7 +128,11 @@ try {
             usleep(100000);
         }
         $status = isset($http_response_header[0]) && preg_match('/\s(\d{3})\s/', $http_response_header[0], $match) ? (int)$match[1] : 0;
-        assertOAuth($status === 401, 'invalid bearer rejected over HTTP (got '.$status.')');
+        $phase = '';
+        foreach ($http_response_header ?? [] as $header) {
+            if (stripos($header, 'X-VK-to-GPT-Test-Phase:') === 0) $phase = trim(substr($header, strlen('X-VK-to-GPT-Test-Phase:')));
+        }
+        assertOAuth($status === 401, 'invalid bearer rejected over HTTP (got '.$status.($phase === '' ? '' : ', phase '.$phase).')');
 
         $initialize = json_encode(['jsonrpc' => '2.0', 'id' => 1, 'method' => 'initialize', 'params' => [
             'protocolVersion' => '2025-06-18', 'capabilities' => [], 'clientInfo' => ['name' => 'oauth-smoke', 'version' => '1'],
