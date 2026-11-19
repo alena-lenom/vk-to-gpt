@@ -72,7 +72,7 @@ with tempfile.TemporaryDirectory(prefix='vk-mcp-') as sessions:
             indexed = {t['name']: t for t in tools}
             assert all(indexed[t['name']]['annotations']['readOnlyHint'] for t in expected)
             assert all(not indexed[name]['annotations']['readOnlyHint'] and not indexed[name]['annotations']['idempotentHint'] for name in ['vk_wall_post', 'vk_wall_edit', 'vk_wall_create_comment'])
-            print('HTTP: initialize + tools/list returned seven read tools and three bounded write tools')
+            print(f'HTTP: initialize + tools/list returned {len(expected)} read tools and three bounded write tools')
             # No VK credentials are configured in this isolated smoke environment.
             # The read tool must report the missing token without making a VK request.
             status, _, body = request(base, {

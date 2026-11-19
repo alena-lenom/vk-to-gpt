@@ -75,6 +75,12 @@ The smoke test starts and stops temporary PHP HTTP listeners with isolated envir
 
 **OAuth branch verification:** OAuth code is not deployed and has not completed a real client authorization/token exchange. Local macOS PHP 8.4.27 lacks PDO SQLite; the OAuth integration test is intended for CI, where this branch must enable SQLite before it can pass. Existing base verification above does not certify this OAuth branch.
 
+## Bounded wall collection (PHP branch only)
+
+`vk_wall_collect` collects up to 300 post-counter records per call using `wall.get` with sequential `offset` pages, without `wall.getById` or `wall.getComments`. Follow `next_offset` to cover larger walls. Each result includes `reported_total`, `coverage` (COMPLETE/PARTIAL), duplicate counts, and actual `owner_id` for every returned post. A personal wall can include posts with community ownership; never silently attribute those posts to the personal owner. The response is ephemeral, not a durable SAPI cycle snapshot, and does not claim audience, native reach, historic comments, or period-complete analytics. No new VK credentials are needed.
+
+SAPI's existing community `wall_reply_new` Callback collector is the authoritative source of observed inbound events. It remains in SAPI: this branch neither registers a second VK Callback endpoint nor reads across SAPI's private data boundary. A separately reviewed, authorized read-only bridge is required before exposing those protected events in ChatGPT; the event stream is not historical comment coverage.
+
 ## Roadmap
 
 1. Bind every read to the configured personal page or community; route tokens by API method and account context, with fallback only for documented token-type errors.

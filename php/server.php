@@ -14,6 +14,7 @@ use Mcp\Server\Session\FileSessionStore;
 require_once __DIR__.'/ReadOnly.php';
 require_once __DIR__.'/WriteTools.php';
 require_once __DIR__.'/VkClient.php';
+require_once __DIR__.'/WallCollector.php';
 
 function buildServer(VkClient $client, string $sessionDirectory): Server
 {
@@ -51,7 +52,9 @@ function buildServer(VkClient $client, string $sessionDirectory): Server
                             getenv('VK_PERSONAL_OWNER_ID') ?: null,
                             getenv('VK_COMMUNITY_ID') ?: null,
                         );
-                        $result = $this->client->call($method, $params);
+                        $result = $this->name === 'vk_wall_collect'
+                            ? WallCollector::collect($this->client, $params)
+                            : $this->client->call($method, $params);
                     }
                     return new CallToolResult([new TextContent(json_encode($result, JSON_THROW_ON_ERROR))]);
                 } catch (\InvalidArgumentException $error) {

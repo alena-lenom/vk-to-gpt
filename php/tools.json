@@ -33,6 +33,40 @@
     }
   },
   {
+    "name": "vk_wall_collect",
+    "description": "Collect up to 300 post-counter records via paginated wall.get for one configured personal/community wall; returns source coverage and next_offset, not native reach or full comment history",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "owner_id": {
+          "type": "integer"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000000
+        },
+        "filter": {
+          "type": "string",
+          "enum": [
+            "all",
+            "owner",
+            "others"
+          ]
+        }
+      },
+      "required": [
+        "owner_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "vk_wall_get_by_id",
     "description": "Read specified posts belonging to one configured wall",
     "inputSchema": {

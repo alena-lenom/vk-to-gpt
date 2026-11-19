@@ -68,6 +68,7 @@ final class ReadOnlyTools
         ];
         [$method, $params] = match ($name) {
             'vk_wall_get' => ['wall.get', $wall() + ['filter' => $enum('filter', ['all', 'owner', 'others'], null)]],
+            'vk_wall_collect' => ['wall.get', ['owner_id' => $int('owner_id', -2147483647, 2147483647), 'limit' => $optional('limit', 1, 300, 100), 'offset' => $optional('offset', 0, 10000000, 0), 'filter' => $enum('filter', ['all', 'owner', 'others'], null)]],
             'vk_wall_get_by_id' => ['wall.getById', ['posts' => $ids('posts', 2000, '/^-?\d+_\d+(,-?\d+_\d+)*$/D')]],
             'vk_wall_get_comments' => ['wall.getComments', $wall() + ['post_id' => $int('post_id', 1, 2147483647)]],
             'vk_users_get' => ['users.get', ['user_ids' => $ids('user_ids', 500, '/^\d+(,\d+)*$/D')]],
@@ -82,6 +83,7 @@ final class ReadOnlyTools
         };
         switch ($name) {
             case 'vk_wall_get':
+            case 'vk_wall_collect':
             case 'vk_wall_get_comments':
                 $assertOwner($params['owner_id']);
                 break;

@@ -3,7 +3,10 @@ import {readFileSync} from 'node:fs';
 import {TOOLS} from '../../src/read-only.js';
 
 const phpTools = JSON.parse(readFileSync(new URL('../../php/tools.json', import.meta.url)));
-assert.deepEqual(phpTools.map(({name}) => name), TOOLS.map(({name}) => name));
+assert.deepEqual(phpTools.filter(({name}) => name !== 'vk_wall_collect').map(({name}) => name), TOOLS.map(({name}) => name));
+const collector = phpTools.find(({name}) => name === 'vk_wall_collect');
+assert.ok(collector, 'PHP-only bounded wall collector must be exposed');
+assert.equal(collector.inputSchema.properties.limit.maximum, 300);
 for (const tool of TOOLS) {
   const phpTool = phpTools.find(({name}) => name === tool.name);
   assert.deepEqual(phpTool.inputSchema, tool.inputSchema, `Input schema mismatch for ${tool.name}`);

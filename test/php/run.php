@@ -3,6 +3,7 @@ declare(strict_types=1);
 require __DIR__.'/../../php/ReadOnly.php';
 require __DIR__.'/../../php/WriteTools.php';
 require __DIR__.'/../../php/VkClient.php';
+require __DIR__.'/../../php/WallCollector.php';
 require __DIR__.'/../../php/Security.php';
 use VkToGpt\ReadOnlyTools as Tools;
 use VkToGpt\VkClient;
@@ -20,10 +21,11 @@ function rejects(Closure $run, string $text): void {
 foreach ([false, '', ' ', "bad\ntoken"] as $secret) check(!VkToGpt\authorized($secret, 'Bearer fake'));
 foreach ([null, '', 'Basic fake', 'Bearer wrong', 'Bearer fake extra', 'Bearer fake,fake'] as $header) check(!VkToGpt\authorized('fake', $header));
 check(VkToGpt\authorized('fake', 'bearer fake'));
-check(count(Tools::definitions()) === 7);
+check(count(Tools::definitions()) === 8);
 $cases = [
     ['vk_wall_get', ['owner_id'=>-2], ['wall.get', ['owner_id'=>-2,'count'=>20]]],
     ['vk_wall_get', ['owner_id'=>1], ['wall.get', ['owner_id'=>1,'count'=>20]]],
+    ['vk_wall_collect', ['owner_id'=>-2,'limit'=>250], ['wall.get', ['owner_id'=>-2,'limit'=>250,'offset'=>0]]],
     ['vk_wall_get_by_id', ['posts'=>' -2_2 '], ['wall.getById',['posts'=>'-2_2']]],
     ['vk_wall_get_comments', ['owner_id'=>-2,'post_id'=>2,'offset'=>0], ['wall.getComments',['owner_id'=>-2,'count'=>20,'offset'=>0,'post_id'=>2]]],
     ['vk_users_get', ['user_ids'=>'1'], ['users.get',['user_ids'=>'1']]],
@@ -33,6 +35,8 @@ $cases = [
 ];
 foreach ($cases as [$name,$args,$expected]) check(Tools::resolve($name,$args) === $expected);
 foreach ([['owner_id'=>'1'],['owner_id'=>1.0],['owner_id'=>1,'count'=>101],['owner_id'=>1,'count'=>null],['owner_id'=>1,'filter'=>null],['owner_id'=>1,'access_token'=>'x'],['owner_id'=>1,'offset'=>10000001]] as $args) rejects(fn()=>Tools::resolve('vk_wall_get',$args), '');
+rejects(fn()=>Tools::resolve('vk_wall_collect',['owner_id'=>-2,'limit'=>301]),'limit');
+rejects(fn()=>Tools::resolve('vk_wall_collect',['owner_id'=>-999]),'configured');
 rejects(fn()=>Tools::resolve('__proto__',[]),'blocked');
 rejects(fn()=>Tools::resolve('vk_wall_post',[]),'blocked');
 rejects(fn()=>Tools::resolve('vk_stats_get',['group_id'=>2,'timestamp_from'=>2,'timestamp_to'=>1]),'period');
@@ -143,4 +147,32 @@ try {
     check(!str_contains($e->getMessage(),'private-secret'));
 }
 
+$batchRequests = [];
+$batchClient = new VkClient('fake-service', null, function($url, $body) use (&$batchRequests) {
+    parse_str($body, $params);
+    $batchRequests[] = $params;
+    $start = (int)$params['offset'];
+    $end = min(235, $start + (int)$params['count']);
+    $posts = [];
+    for ($i = $start; $i < $end; ++$i) {
+        $posts[] = ['id' => $i + 1, 'owner_id' => $i === 1 ? 123 : -2,
+            'from_id' => -2, 'date' => 1700000000 + $i,
+            'views' => ['count' => $i + 10], 'likes' => ['count' => 0]];
+    }
+    return [200, json_encode(['response' => ['count' => 235, 'items' => $posts]], JSON_THROW_ON_ERROR)];
+});
+$full = VkToGpt\WallCollector::collect($batchClient, ['owner_id' => -2, 'limit' => 300]);
+check($full['coverage'] === 'COMPLETE' && $full['reported_total'] === 235);
+check($full['fetched'] === 235 && $full['pages'] === 3 && $full['next_offset'] === null);
+check($full['different_owner_posts'] === 1 && $full['items'][1]['post_key'] === '123_2');
+check($full['items'][0]['likes'] === 0 && $full['items'][0]['comments'] === null);
+check(array_column($batchRequests, 'count') === ['100', '100', '100']);
+check(array_column($batchRequests, 'offset') === ['0', '100', '200']);
+check(!array_key_exists('limit', $batchRequests[0]) && $batchRequests[0]['access_token'] === 'fake-service');
+$partial = VkToGpt\WallCollector::collect($batchClient, ['owner_id' => -2, 'limit' => 100, 'offset' => 100]);
+check($partial['coverage'] === 'PARTIAL' && $partial['next_offset'] === 200);
+check($partial['fetched'] === 100 && $partial['items'][0]['post_key'] === '-2_101');
+rejects(fn() => VkToGpt\WallCollector::collect($batchClient, ['owner_id' => -2, 'limit' => 301]), 'bounds');
+$invalidPage = new VkClient('fake-service', null, fn() => [200,'{"response":{"count":2,"items":[{"id":"bad"}]}}']);
+rejects(fn() => VkToGpt\WallCollector::collect($invalidPage, ['owner_id' => -2, 'limit' => 10]), 'identity');
 echo "PHP: $n checks passed (mock VK only)\n";
