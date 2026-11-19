@@ -126,6 +126,38 @@ try {
                 if ($post['owner_id'] !== $ownerId) $foreign++;
             }
             assertProbe($foreign === $snapshot['different_owner_posts']);
+            if (getenv('VK_PROBE_METRICS') === '1') {
+                $summary = $snapshot['post_metric_summary'] ?? null;
+                $owned = array_values(array_filter($snapshot['items'],
+                    static fn (array $post): bool => $post['owner_id'] === $ownerId));
+                assertProbe(is_array($summary)
+                    && ($summary['scope'] ?? null) === 'matching_owner_posts_only'
+                    && ($summary['metric_basis'] ?? null) === 'current_cumulative_post_counters_not_period_activity'
+                    && ($summary['coverage'] ?? null) === $snapshot['coverage']
+                    && ($summary['owned_posts'] ?? null) === count($owned)
+                    && ($summary['excluded_other_owner_posts'] ?? null) === $foreign);
+                foreach (['views', 'likes', 'comments', 'reposts'] as $metric) {
+                    $record = $summary['metrics'][$metric] ?? null;
+                    $known = 0;
+                    $sum = 0;
+                    foreach ($owned as $post) {
+                        if (is_int($post[$metric] ?? null) && $post[$metric] >= 0) {
+                            ++$known;
+                            $sum += $post[$metric];
+                        }
+                    }
+                    $missing = count($owned) - $known;
+                    $status = $missing === 0 ? 'AVAILABLE'
+                        : ($known === 0 ? 'UNAVAILABLE' : 'PARTIAL');
+                    assertProbe(is_array($record)
+                        && ($record['sum_known'] ?? null) === $sum
+                        && ($record['available_posts'] ?? null) === $known
+                        && ($record['missing_posts'] ?? null) === $missing
+                        && ($record['status'] ?? null) === $status);
+                }
+                printf("%s_post_metric_summary=ok owned=%d excluded=%d\n",
+                    $label, count($owned), $foreign);
+            }
             printf("%s_wall_collect=ok total=%d fetched=%d coverage=%s other_owner=%d\n",
                 $label, $snapshot['reported_total'], $snapshot['fetched'],
                 $snapshot['coverage'], $foreign);
