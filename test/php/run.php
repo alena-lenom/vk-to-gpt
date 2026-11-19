@@ -138,7 +138,7 @@ $lastError=new VkClient('fake-service',null,function() {
 try {
     $lastError->call('wall.getById',['posts'=>'-2_3']);
     throw new LogicException('Expected VK error');
-} catch (VkToGpt\\VkApiException $e) {
+} catch (VkToGpt\VkApiException $e) {
     check($e->vkCode===1051 && $e->getMessage()==='VK API error 1051');
     check(!str_contains($e->getMessage(),'private-secret'));
 }
