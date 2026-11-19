@@ -18,7 +18,7 @@ final class VkClient
         'wall.getComments', 'stats.get', 'stats.getPostReach',
     ];
     private const WRITES = ['wall.post', 'wall.edit', 'wall.createComment'];
-    private const FALLBACK_ERRORS = [27, 1051];
+    private const FALLBACK_ERRORS = [27, 28, 1051];
 
     public function __construct(
         private readonly ?string $serviceKey,
@@ -56,7 +56,8 @@ final class VkClient
                 if (!$isWrite && isset($tokens[$index + 1]) && in_array($error->vkCode, self::FALLBACK_ERRORS, true)) {
                     continue;
                 }
-                throw new \RuntimeException($error->getMessage());
+                // Preserve the sanitized numeric VK code for a read-only MCP diagnosis.
+                throw $error;
             }
         }
         throw new \RuntimeException('VK API fallback exhausted');
