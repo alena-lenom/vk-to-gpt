@@ -46,7 +46,9 @@ try {
         $store = VkToGpt\OAuth\Store::open((string)getenv('MCP_OAUTH_DB'));
         $resourceServer = VkToGpt\OAuth\resourceServer($store, (string)getenv('MCP_OAUTH_PUBLIC_KEY'));
         $psrFactory = new Psr17Factory();
-        $authRequest = new ServerRequest('POST', 'https://'.($_SERVER['HTTP_HOST'] ?? '').($_SERVER['REQUEST_URI'] ?? '/mcp'), getallheaders() ?: [], $psrFactory->createStreamFromString(''));
+        $authHeaders = getallheaders() ?: [];
+        $authHeaders['Authorization'] = $authorization;
+        $authRequest = new ServerRequest('POST', 'https://'.($_SERVER['HTTP_HOST'] ?? '').($_SERVER['REQUEST_URI'] ?? '/mcp'), $authHeaders, $psrFactory->createStreamFromString(''));
         try {
             $validated = $resourceServer->validateAuthenticatedRequest($authRequest);
         } catch (Throwable) {
