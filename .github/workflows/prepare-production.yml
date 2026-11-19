@@ -11,6 +11,10 @@ on:
         description: Publish the read diagnostics after tests
         type: boolean
         default: false
+      inspect_runtime:
+        description: Report credential variable presence from private configuration
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -133,6 +137,42 @@ jobs:
           echo $config['MCP_BEARER_TOKEN'];
           PHP
           printf '%s\n' 'Diagnostics published. HTTPS, MCP and OAuth discovery verified.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove temporary SSH files
+        if: always()
+        run: rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
+
+  inspect-runtime:
+    if: inputs.inspect_runtime && github.actor == 'alena-lenom' && github.ref == 'refs/heads/feat/php-mcp-http'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: production
+    env:
+      PROD_HOST: ${{ secrets.PROD_HOST }}
+      PROD_USER: ${{ secrets.PROD_USER }}
+    steps:
+      - name: Configure trusted SSH
+        env:
+          SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          printf '%s\n' 'Host *' '  BatchMode yes' '  IdentitiesOnly yes' '  StrictHostKeyChecking yes' '  ConnectTimeout 15' > "$HOME/.ssh/config"
+          ssh-keygen -F "$PROD_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
+      - name: Report configured credential names only
+        run: |
+          ssh "$PROD_USER@$PROD_HOST" /opt/php/8.4/bin/php <<'PHP'
+          <?php
+          $config = require '/var/www/u3641285/data/vk-to-gpt/shared/config.php';
+          foreach (['VK_USER_TOKEN', 'VK_SERVICE_KEY', 'VK_COMMUNITY_TOKEN'] as $name) {
+              $configured = is_array($config) && isset($config[$name]) && is_string($config[$name]) && $config[$name] !== '';
+              echo $name.'='.($configured ? 'present' : 'missing')."\n";
+          }
+          PHP
       - name: Remove temporary SSH files
         if: always()
         run: rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
