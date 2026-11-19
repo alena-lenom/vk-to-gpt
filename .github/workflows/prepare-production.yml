@@ -181,12 +181,13 @@ jobs:
           "$php" "$incoming/app/deploy/provision-oauth.php" "$base" >/dev/null
           "$php" -r '$p=$argv[1]."/shared/config.php"; $c=require $p; if((fileperms($p)&0077)!==0 || !is_array($c) || !is_string($c["MCP_BEARER_TOKEN"]??null) || strlen($c["MCP_BEARER_TOKEN"])<32 || ($c["MCP_ALLOWED_HOST"]??null)!=="vk.tattoomystery.ru" || ($c["MCP_SESSION_DIR"]??null)!==$argv[1]."/shared/sessions") exit(1); require $argv[2]."/vendor/autoload.php";' "$base" "$incoming/app" >/dev/null 2>&1
           sha256sum "$site/index.html" > "$backup/index.sha256"
-          for f in mcp.php .htaccess; do if test -f "$site/$f"; then cp -p "$site/$f" "$backup/$f"; fi; done
+          for f in mcp.php oauth.php .htaccess; do if test -f "$site/$f"; then cp -p "$site/$f" "$backup/$f"; fi; done
           if test -d "$base/app"; then cp -a "$base/app" "$backup/app"; fi
           touch "$backup/ready"
           mkdir -p "$base/app"
           rsync -a --delete "$incoming/app/" "$base/app/"
           install -m 644 "$base/app/deploy/mcp.php" "$site/mcp.php"
+          install -m 644 "$base/app/deploy/oauth.php" "$site/oauth.php"
           cat > "$incoming/new.htaccess" <<'HTACCESS'
           # BEGIN VK TO GPT MCP
           RewriteEngine On
@@ -222,7 +223,7 @@ jobs:
           site=/var/www/u3641285/data/www/vk.tattoomystery.ru
           backup="$base/backups/$1"
           test -f "$backup/ready" || exit 0
-          for f in mcp.php .htaccess; do
+          for f in mcp.php oauth.php .htaccess; do
             if test -f "$backup/$f"; then cp -p "$backup/$f" "$site/$f"; else rm -f "$site/$f"; fi
           done
           if test -d "$backup/app"; then rsync -a --delete "$backup/app/" "$base/app/"; elif test -d "$base/app"; then mv "$base/app" "$base/incoming/$1/failed-app"; fi

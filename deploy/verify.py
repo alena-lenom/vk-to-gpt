@@ -36,10 +36,12 @@ def main():
     check(wrong_bearer_status==401,f'invalid bearer HTTP {wrong_bearer_status}')
     check(request('/mcp',token=token,origin=True)[0]==403,'Origin rejection')
     status,_,body=request('/.well-known/oauth-protected-resource')
-    resource=json.loads(body)
+    try: resource=json.loads(body)
+    except (json.JSONDecodeError,UnicodeDecodeError): raise RuntimeError(f'protected-resource metadata JSON HTTP {status}')
     check(status==200 and resource.get('resource')==BASE and resource.get('authorization_servers')==[BASE],'OAuth protected-resource metadata')
     status,_,body=request('/.well-known/oauth-authorization-server')
-    metadata=json.loads(body)
+    try: metadata=json.loads(body)
+    except (json.JSONDecodeError,UnicodeDecodeError): raise RuntimeError(f'authorization-server metadata JSON HTTP {status}')
     check(status==200 and metadata.get('issuer')==BASE and metadata.get('code_challenge_methods_supported')==['S256']
           and metadata.get('authorization_response_iss_parameter_supported') is True
           and metadata.get('registration_endpoint')==BASE+'/oauth/register','OAuth authorization metadata')
