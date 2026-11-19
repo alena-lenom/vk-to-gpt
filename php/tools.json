@@ -199,5 +199,36 @@
       ],
       "additionalProperties": false
     }
+  },
+  {
+    "name": "vk_sapi_wall_replies",
+    "description": "Read up to 50 observed community wall_reply_new events already stored by SAPI Callback; private source disabled until configured, not historical VK comment totals",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "group_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "post_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "since": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4102444800
+        }
+      },
+      "required": [
+        "group_id"
+      ],
+      "additionalProperties": false
+    }
   }
 ]

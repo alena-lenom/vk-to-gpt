@@ -4,6 +4,7 @@ require __DIR__.'/../../php/ReadOnly.php';
 require __DIR__.'/../../php/WriteTools.php';
 require __DIR__.'/../../php/VkClient.php';
 require __DIR__.'/../../php/WallCollector.php';
+require __DIR__.'/../../php/SapiEventReader.php';
 require __DIR__.'/../../php/Security.php';
 use VkToGpt\ReadOnlyTools as Tools;
 use VkToGpt\VkClient;
@@ -21,11 +22,12 @@ function rejects(Closure $run, string $text): void {
 foreach ([false, '', ' ', "bad\ntoken"] as $secret) check(!VkToGpt\authorized($secret, 'Bearer fake'));
 foreach ([null, '', 'Basic fake', 'Bearer wrong', 'Bearer fake extra', 'Bearer fake,fake'] as $header) check(!VkToGpt\authorized('fake', $header));
 check(VkToGpt\authorized('fake', 'bearer fake'));
-check(count(Tools::definitions()) === 8);
+check(count(Tools::definitions()) === 9);
 $cases = [
     ['vk_wall_get', ['owner_id'=>-2], ['wall.get', ['owner_id'=>-2,'count'=>20]]],
     ['vk_wall_get', ['owner_id'=>1], ['wall.get', ['owner_id'=>1,'count'=>20]]],
     ['vk_wall_collect', ['owner_id'=>-2,'limit'=>250], ['wall.get', ['owner_id'=>-2,'limit'=>250,'offset'=>0]]],
+    ['vk_sapi_wall_replies', ['group_id'=>2], ['sapi.callback.wall_reply_new',['group_id'=>2,'limit'=>20,'since'=>0]]],
     ['vk_wall_get_by_id', ['posts'=>' -2_2 '], ['wall.getById',['posts'=>'-2_2']]],
     ['vk_wall_get_comments', ['owner_id'=>-2,'post_id'=>2,'offset'=>0], ['wall.getComments',['owner_id'=>-2,'count'=>20,'offset'=>0,'post_id'=>2]]],
     ['vk_users_get', ['user_ids'=>'1'], ['users.get',['user_ids'=>'1']]],
@@ -37,6 +39,8 @@ foreach ($cases as [$name,$args,$expected]) check(Tools::resolve($name,$args) ==
 foreach ([['owner_id'=>'1'],['owner_id'=>1.0],['owner_id'=>1,'count'=>101],['owner_id'=>1,'count'=>null],['owner_id'=>1,'filter'=>null],['owner_id'=>1,'access_token'=>'x'],['owner_id'=>1,'offset'=>10000001]] as $args) rejects(fn()=>Tools::resolve('vk_wall_get',$args), '');
 rejects(fn()=>Tools::resolve('vk_wall_collect',['owner_id'=>-2,'limit'=>301]),'limit');
 rejects(fn()=>Tools::resolve('vk_wall_collect',['owner_id'=>-999]),'configured');
+rejects(fn()=>Tools::resolve('vk_sapi_wall_replies',['group_id'=>999]),'configured');
+rejects(fn()=>Tools::resolve('vk_sapi_wall_replies',['group_id'=>2,'limit'=>51]),'limit');
 rejects(fn()=>Tools::resolve('__proto__',[]),'blocked');
 rejects(fn()=>Tools::resolve('vk_wall_post',[]),'blocked');
 rejects(fn()=>Tools::resolve('vk_stats_get',['group_id'=>2,'timestamp_from'=>2,'timestamp_to'=>1]),'period');
@@ -175,4 +179,30 @@ check($partial['fetched'] === 100 && $partial['items'][0]['post_key'] === '-2_10
 rejects(fn() => VkToGpt\WallCollector::collect($batchClient, ['owner_id' => -2, 'limit' => 301]), 'bounds');
 $invalidPage = new VkClient('fake-service', null, fn() => [200,'{"response":{"count":2,"items":[{"id":"bad"}]}}']);
 rejects(fn() => VkToGpt\WallCollector::collect($invalidPage, ['owner_id' => -2, 'limit' => 10]), 'identity');
-echo "PHP: $n checks passed (mock VK only)\n";
+$query = ['group_id' => 2, 'limit' => 10];
+check(VkToGpt\SapiEventReader::read(null, $query)['status'] === 'NOT_CONFIGURED');
+$dir = sys_get_temp_dir().'/vk-sapi-events-test-'.bin2hex(random_bytes(4));
+check(mkdir($dir, 0700));
+$file = $dir.'/event-'.str_repeat('a', 64).'.json';
+$event = ['platform'=>'VK','source'=>['type'=>'community','group_id'=>2],
+    'event_type'=>'wall_reply_new','processing_status'=>'ACCEPTED',
+    'received_at'=>'2026-09-20T12:00:00+00:00',
+    'interaction'=>['comment_id'=>5,'post_id'=>7,'post_owner_id'=>-2,
+        'author_id'=>8,'date'=>1789905600,'text'=>'hello'],
+    'secret'=>'must-not-appear'];
+try {
+    check(file_put_contents($file,json_encode($event,JSON_THROW_ON_ERROR))!==false);
+    $observed=VkToGpt\SapiEventReader::read($dir,$query);
+    check($observed['status']==='AVAILABLE' && $observed['observed_matching_events']===1);
+    check($observed['items'][0]['comment_id']===5 && $observed['items'][0]['text_excerpt']==='hello');
+    check(!str_contains(json_encode($observed),'must-not-appear'));
+    check(VkToGpt\SapiEventReader::read($dir,['group_id'=>2,'since'=>1789905700])['observed_matching_events']===0);
+    check(VkToGpt\SapiEventReader::read($dir,['group_id'=>2,'post_id'=>99])['observed_matching_events']===0);
+    $event['source']['group_id']=3;
+    file_put_contents($file,json_encode($event,JSON_THROW_ON_ERROR));
+    rejects(fn()=>VkToGpt\SapiEventReader::read($dir,$query),'provenance');
+} finally {
+    @unlink($file);
+    @rmdir($dir);
+}
+echo "PHP: $n checks passed (mock VK and SAPI events only)\n";

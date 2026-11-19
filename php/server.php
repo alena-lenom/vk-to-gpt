@@ -15,6 +15,7 @@ require_once __DIR__.'/ReadOnly.php';
 require_once __DIR__.'/WriteTools.php';
 require_once __DIR__.'/VkClient.php';
 require_once __DIR__.'/WallCollector.php';
+require_once __DIR__.'/SapiEventReader.php';
 
 function buildServer(VkClient $client, string $sessionDirectory): Server
 {
@@ -52,13 +53,17 @@ function buildServer(VkClient $client, string $sessionDirectory): Server
                             getenv('VK_PERSONAL_OWNER_ID') ?: null,
                             getenv('VK_COMMUNITY_ID') ?: null,
                         );
-                        $result = $this->name === 'vk_wall_collect'
-                            ? WallCollector::collect($this->client, $params)
-                            : $this->client->call($method, $params);
+                        $result = match ($this->name) {
+                            'vk_wall_collect' => WallCollector::collect($this->client, $params),
+                            'vk_sapi_wall_replies' => SapiEventReader::read(getenv('VK_SAPI_EVENTS_DIR') ?: null, $params),
+                            default => $this->client->call($method, $params),
+                        };
                     }
                     return new CallToolResult([new TextContent(json_encode($result, JSON_THROW_ON_ERROR))]);
                 } catch (\InvalidArgumentException $error) {
                     return CallToolResult::error([new TextContent($error->getMessage())]);
+                } catch (SapiEventSourceException $error) {
+                    return CallToolResult::error([new TextContent('SAPI Callback read unavailable (invalid source or provenance)')]);
                 } catch (VkApiException $error) {
                     // Writes may already have happened: keep their failure opaque and non-retryable.
                     return CallToolResult::error([new TextContent($isWrite

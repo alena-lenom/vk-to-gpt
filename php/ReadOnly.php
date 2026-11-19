@@ -69,6 +69,7 @@ final class ReadOnlyTools
         [$method, $params] = match ($name) {
             'vk_wall_get' => ['wall.get', $wall() + ['filter' => $enum('filter', ['all', 'owner', 'others'], null)]],
             'vk_wall_collect' => ['wall.get', ['owner_id' => $int('owner_id', -2147483647, 2147483647), 'limit' => $optional('limit', 1, 300, 100), 'offset' => $optional('offset', 0, 10000000, 0), 'filter' => $enum('filter', ['all', 'owner', 'others'], null)]],
+            'vk_sapi_wall_replies' => ['sapi.callback.wall_reply_new', ['group_id' => $group(), 'post_id' => $optional('post_id', 1, 2147483647), 'limit' => $optional('limit', 1, 50, 20), 'since' => $optional('since', 0, 4102444800, 0)]],
             'vk_wall_get_by_id' => ['wall.getById', ['posts' => $ids('posts', 2000, '/^-?\d+_\d+(,-?\d+_\d+)*$/D')]],
             'vk_wall_get_comments' => ['wall.getComments', $wall() + ['post_id' => $int('post_id', 1, 2147483647)]],
             'vk_users_get' => ['users.get', ['user_ids' => $ids('user_ids', 500, '/^\d+(,\d+)*$/D')]],
@@ -108,6 +109,7 @@ final class ReadOnlyTools
                 }
                 break;
             case 'vk_stats_get':
+            case 'vk_sapi_wall_replies':
                 if ($communityGroupId === null || $params['group_id'] !== $communityGroupId) {
                     throw new \InvalidArgumentException('Target is not configured');
                 }
