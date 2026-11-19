@@ -157,6 +157,7 @@ jobs:
       PROD_HOST: ${{ secrets.PROD_HOST }}
       PROD_USER: ${{ secrets.PROD_USER }}
     steps:
+      - uses: actions/checkout@v4
       - name: Configure trusted SSH
         env:
           SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
