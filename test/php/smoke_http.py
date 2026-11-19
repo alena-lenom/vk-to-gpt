@@ -30,7 +30,7 @@ with tempfile.TemporaryDirectory(prefix='vk-mcp-') as sessions:
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
-        env = {'PATH': os.environ['PATH'], 'MCP_SESSION_DIR': sessions, 'MCP_ALLOWED_HOST': '127.0.0.1'}
+        env = {'PATH': os.environ['PATH'], 'MCP_SESSION_DIR': sessions, 'MCP_ALLOWED_HOST': '127.0.0.1', 'VK_COMMUNITY_ID': '2'}
         if configured is not None:
             env['MCP_BEARER_TOKEN'] = configured
         process = subprocess.Popen(['php', '-S', f'127.0.0.1:{port}', '-t', 'public'], cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -72,6 +72,20 @@ with tempfile.TemporaryDirectory(prefix='vk-mcp-') as sessions:
             assert all(indexed[t['name']]['annotations']['readOnlyHint'] for t in expected)
             assert all(not indexed[name]['annotations']['readOnlyHint'] and not indexed[name]['annotations']['idempotentHint'] for name in ['vk_wall_post', 'vk_wall_edit', 'vk_wall_create_comment'])
             print('HTTP: initialize + tools/list returned seven read tools and three bounded write tools')
+            # No VK credentials are configured in this isolated smoke environment.
+            # The read tool must report the missing token without making a VK request.
+            status, _, body = request(base, {
+                'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call',
+                'params': {'name': 'vk_wall_get', 'arguments': {'owner_id': -2, 'count': 1}}
+            }, 'local-test-only', session)
+            assert status == 200, (status, body)
+            if body.lstrip().startswith('data:') or 'event:' in body:
+                body = next(line[5:].strip() for line in body.splitlines() if line.startswith('data:'))
+            tool_result = json.loads(body)['result']
+            assert tool_result['isError'] is True, tool_result
+            assert tool_result['content'][0]['text'] == 'VK read failed: required VK token is not configured', tool_result
+            print('HTTP: missing VK credential produces a safe, distinct read error')
+
         finally:
             process.terminate()
             process.wait(timeout=5)
