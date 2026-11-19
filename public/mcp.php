@@ -54,7 +54,7 @@ try {
         $authHeaders = getallheaders() ?: [];
         $authHeaders['Authorization'] = $authorization;
         $stage = 'oauth_request';
-        $authRequest = new ServerRequest('POST', 'https://'.($_SERVER['HTTP_HOST'] ?? '').($_SERVER['REQUEST_URI'] ?? '/mcp'), $authHeaders, $psrFactory->createStreamFromString(''));
+        $authRequest = new ServerRequest('POST', 'https://'.($_SERVER['HTTP_HOST'] ?? '').($_SERVER['REQUEST_URI'] ?? '/mcp'), $authHeaders, $psrFactory->createStream(''));
         $stage = 'oauth_validation';
         try {
             $validated = $resourceServer->validateAuthenticatedRequest($authRequest);
@@ -116,7 +116,7 @@ try {
     $request = new ServerRequest($_SERVER['REQUEST_METHOD'],
         $scheme.'://'.($_SERVER['HTTP_HOST'] ?? '').($_SERVER['REQUEST_URI'] ?? '/mcp.php'),
         $headers, isset($GLOBALS['VK_TO_GPT_MCP_BODY'])
-            ? $factory->createStreamFromString($GLOBALS['VK_TO_GPT_MCP_BODY'])
+            ? $factory->createStream($GLOBALS['VK_TO_GPT_MCP_BODY'])
             : $factory->createStreamFromResource(fopen('php://input', 'rb')),
         serverParams: $_SERVER);
     $host = getenv('MCP_ALLOWED_HOST') ?: 'localhost';
@@ -136,10 +136,11 @@ try {
         }
     }
     echo $response->getBody();
-} catch (Throwable) {
+} catch (Throwable $error) {
     http_response_code(503);
     if (getenv('VK_TO_GPT_TEST_DIAGNOSTICS') === '1' && isset($stage)) {
         header('X-VK-to-GPT-Test-Phase: '.$stage);
+        header('X-VK-to-GPT-Test-Error: '.rawurlencode(get_class($error)));
     }
     // No exception, configuration, request data or credentials in output/logs.
     echo 'MCP unavailable';
