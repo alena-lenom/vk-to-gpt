@@ -91,6 +91,60 @@ try {
     );
     assertOAuth($validated->getAttribute('oauth_user_id') === 'vk-to-gpt-owner', 'signed access token validation');
 
+    $sessions = $directory.'/mcp-sessions';
+    mkdir($sessions, 0700);
+    $socket = stream_socket_server('tcp://127.0.0.1:0', $socketError, $socketMessage);
+    assertOAuth(is_resource($socket), 'reserve local HTTP port');
+    $address = stream_socket_get_name($socket, false);
+    fclose($socket);
+    $port = (int)substr((string)strrchr((string)$address, ':'), 1);
+    $environment = getenv();
+    assertOAuth(is_array($environment), 'read test process environment');
+    $environment = array_merge($environment, [
+        'MCP_BEARER_TOKEN' => 'local-static-bearer-for-oauth-test',
+        'MCP_ALLOWED_HOST' => '127.0.0.1',
+        'MCP_SESSION_DIR' => $sessions,
+        'MCP_OAUTH_DB' => $directory.'/oauth.sqlite',
+        'MCP_OAUTH_PUBLIC_KEY' => $publicPath,
+        'VK_SERVICE_KEY' => '', 'VK_USER_TOKEN' => '', 'VK_COMMUNITY_TOKEN' => '',
+        'VK_PERSONAL_OWNER_ID' => '', 'VK_COMMUNITY_ID' => '',
+    ]);
+    $serverProcess = proc_open(
+        [PHP_BINARY, '-S', '127.0.0.1:'.$port, '-t', dirname(__DIR__, 2).'/public'],
+        [0 => ['pipe', 'r'], 1 => ['file', '/dev/null', 'a'], 2 => ['file', '/dev/null', 'a']],
+        $serverPipes,
+        dirname(__DIR__, 2),
+        $environment,
+    );
+    assertOAuth(is_resource($serverProcess), 'start local MCP HTTP server');
+    try {
+        $baseUrl = 'http://127.0.0.1:'.$port.'/mcp.php';
+        $headers = "Host: 127.0.0.1\r\nAuthorization: Bearer incorrect-test-token\r\n";
+        $http = stream_context_create(['http' => ['method' => 'GET', 'header' => $headers, 'ignore_errors' => true, 'timeout' => 3]]);
+        for ($attempt = 0; $attempt < 30; $attempt++) {
+            @file_get_contents($baseUrl, false, $http);
+            if (isset($http_response_header[0])) break;
+            usleep(100000);
+        }
+        $status = isset($http_response_header[0]) && preg_match('/\s(\d{3})\s/', $http_response_header[0], $match) ? (int)$match[1] : 0;
+        assertOAuth($status === 401, 'invalid bearer rejected over HTTP (got '.$status.')');
+
+        $initialize = json_encode(['jsonrpc' => '2.0', 'id' => 1, 'method' => 'initialize', 'params' => [
+            'protocolVersion' => '2025-06-18', 'capabilities' => [], 'clientInfo' => ['name' => 'oauth-smoke', 'version' => '1'],
+        ]], JSON_THROW_ON_ERROR);
+        $http = stream_context_create(['http' => [
+            'method' => 'POST',
+            'header' => "Host: 127.0.0.1\r\nAuthorization: Bearer ".$issued['access_token']."\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nMCP-Protocol-Version: 2025-06-18\r\n",
+            'content' => $initialize, 'ignore_errors' => true, 'timeout' => 5,
+        ]]);
+        $body = file_get_contents($baseUrl, false, $http);
+        $status = isset($http_response_header[0]) && preg_match('/\s(\d{3})\s/', $http_response_header[0], $match) ? (int)$match[1] : 0;
+        assertOAuth($status === 200 && is_string($body) && str_contains($body, '"result"'), 'OAuth token initializes MCP over HTTP (got '.$status.')');
+    } finally {
+        proc_terminate($serverProcess);
+        proc_close($serverProcess);
+    }
+
     $refreshedResponse = $server->respondToAccessTokenRequest($tokenRequest([
         'grant_type' => 'refresh_token',
         'client_id' => $clientId,
