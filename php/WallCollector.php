@@ -99,6 +99,36 @@ final class WallCollector
 
         $hasMore = $offset + $fetched < ($lastTotal ?? 0);
         $complete = $offset === 0 && !$hasMore && !$totalsChanged && $duplicatePosts === 0;
+
+        // Reuse SAPI's missing-vs-zero counter semantics for owned posts only.
+        // A crossposted community item on a personal wall must not inflate
+        // that person's publication metrics.
+        $ownedPosts = array_values(array_filter(
+            $items,
+            static fn (array $post): bool => $post['owner_id'] === $ownerId,
+        ));
+        $metricTotals = [];
+        foreach (['views', 'likes', 'comments', 'reposts'] as $metric) {
+            $knownSum = 0;
+            $available = 0;
+            foreach ($ownedPosts as $post) {
+                $value = $post[$metric];
+                if ($value === null) {
+                    continue;
+                }
+                $knownSum += $value;
+                ++$available;
+            }
+            $missing = count($ownedPosts) - $available;
+            $metricTotals[$metric] = [
+                'sum_known' => $knownSum,
+                'available_posts' => $available,
+                'missing_posts' => $missing,
+                'status' => $missing === 0 ? 'AVAILABLE'
+                    : ($available === 0 ? 'UNAVAILABLE' : 'PARTIAL'),
+            ];
+        }
+
         return [
             'source' => 'VK wall.get',
             'owner_id' => $ownerId,
@@ -116,6 +146,14 @@ final class WallCollector
             'duplicate_posts' => $duplicatePosts,
             'different_owner_posts' => $otherOwnerPosts,
             'metric_scope' => 'post_counters_only_not_audience_reach',
+            'post_metric_summary' => [
+                'scope' => 'matching_owner_posts_only',
+                'owned_posts' => count($ownedPosts),
+                'excluded_other_owner_posts' => $otherOwnerPosts,
+                'coverage' => $complete ? 'COMPLETE' : 'PARTIAL',
+                'metric_basis' => 'current_cumulative_post_counters_not_period_activity',
+                'metrics' => $metricTotals,
+            ],
             'items' => $items,
         ];
     }
