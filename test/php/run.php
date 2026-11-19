@@ -120,4 +120,27 @@ $preferredFetch=function($url,$body) use (&$preferred) {parse_str($body,$params)
 (new VkClient('fake-service','fake-user',$preferredFetch,communityToken:'fake-community'))->call('groups.getById');
 (new VkClient(null,'fake-user',$preferredFetch,communityToken:'fake-community'))->call('groups.getById');
 check($preferred===['fake-service','fake-user']);
+// Token-type error 28 may be retried with an already configured second token.
+$typeAttempts=[];
+$typeClient=new VkClient('fake-service','fake-user',function($url,$body) use (&$typeAttempts) {
+    parse_str($body,$params); $typeAttempts[]=$params['access_token'];
+    return [200,$params['access_token']==='fake-service'
+        ? '{"error":{"error_code":28,"error_msg":"do not print secret"}}'
+        : '{"response":[{"id":3}]}'];
+});
+check($typeClient->call('wall.getById',['posts'=>'-2_3']) === [['id'=>3]]);
+check($typeAttempts === ['fake-service','fake-user']);
+
+// A final VK error keeps only the numeric code, not VK's potentially sensitive payload.
+$lastError=new VkClient('fake-service',null,function() {
+    return [200,'{"error":{"error_code":1051,"error_msg":"private-secret","request_params":[{"key":"access_token","value":"private-secret"}]}}'];
+});
+try {
+    $lastError->call('wall.getById',['posts'=>'-2_3']);
+    throw new LogicException('Expected VK error');
+} catch (VkToGpt\\VkApiException $e) {
+    check($e->vkCode===1051 && $e->getMessage()==='VK API error 1051');
+    check(!str_contains($e->getMessage(),'private-secret'));
+}
+
 echo "PHP: $n checks passed (mock VK only)\n";
