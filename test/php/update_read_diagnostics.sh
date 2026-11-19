@@ -6,16 +6,21 @@ root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
 app=$root/app
 stage=$root/stage
-baseline=ff56156313ed89d9ad42dc8dec7dd49c716ab78c
+baseline=8bcff6a73ffe2b9375d75d8f197b3eb4c5c51a6e
 revision=1111111111111111111111111111111111111111
 mkdir -p "$app/php" "$stage/php" "$root/shared/oauth" "$root/site"
-printf original > "$app/php/VkClient.php"
-printf original > "$app/php/server.php"
+existing=(php/VkClient.php php/ReadOnly.php php/tools.json php/server.php REVISION)
+created=(php/WallCollector.php php/SapiEventReader.php)
+for file in "${existing[@]}"; do
+    printf original > "$app/$file"
+    printf revised > "$stage/$file"
+done
 printf '%s\n' "$baseline" > "$app/REVISION"
-printf revised > "$stage/php/VkClient.php"
-printf revised > "$stage/php/server.php"
 printf '%s\n' "$revision" > "$stage/REVISION"
-chmod 640 "$app/php/VkClient.php" "$app/php/server.php"
+for file in "${created[@]}"; do
+    printf new-source > "$stage/$file"
+done
+chmod 640 "$app/php/"*
 printf oauth > "$app/php/OAuth.php"
 printf config > "$root/shared/config.php"
 printf key > "$root/shared/oauth/private.pem"
@@ -27,14 +32,31 @@ if bash "$script" apply "$app" "$stage" 2222222222222222222222222222222222222222
     exit 1
 fi
 test ! -e "$stage/backup"
+printf collision > "$app/php/WallCollector.php"
+if bash "$script" apply "$app" "$stage" "$baseline" "$revision"; then
+    echo 'Overwrote an existing new-file target' >&2
+    exit 1
+fi
+test "$(cat "$app/php/WallCollector.php")" = collision
+test ! -e "$stage/backup"
+rm "$app/php/WallCollector.php"
 bash "$script" apply "$app" "$stage" "$baseline" "$revision"
 test "$(cat "$app/REVISION")" = "$revision"
-test "$(cat "$app/php/VkClient.php")" = revised
-test "$(cat "$app/php/server.php")" = revised
+for file in "${existing[@]}"; do
+    [[ $file == REVISION ]] || test "$(cat "$app/$file")" = revised
+done
+for file in "${created[@]}"; do
+    test "$(cat "$app/$file")" = new-source
+    test "$(stat -c '%a' "$app/$file")" = 640
+done
 test "$(stat -c '%a' "$app/php/server.php")" = 640
 bash "$script" rollback "$app" "$stage" "$baseline" "$revision"
 test "$(cat "$app/REVISION")" = "$baseline"
-test "$(cat "$app/php/VkClient.php")" = original
-test "$(cat "$app/php/server.php")" = original
+for file in "${existing[@]}"; do
+    [[ $file == REVISION ]] || test "$(cat "$app/$file")" = original
+done
+for file in "${created[@]}"; do
+    test ! -e "$app/$file"
+done
 test "$before" = "$(sha256sum -- "${protected[@]}"; stat -c '%a:%u:%g:%i' -- "${protected[@]}")"
-echo 'Code-only update and rollback preserve OAuth, settings and file permissions'
+echo 'Bounded read adapter update/rollback preserve OAuth, protected settings and permissions'

@@ -8,7 +8,7 @@ on:
         type: string
         required: true
       publish:
-        description: Publish the read diagnostics after tests
+        description: Publish the bounded PHP read adapters after tests
         type: boolean
         default: false
       inspect_runtime:
@@ -54,14 +54,14 @@ jobs:
           node --test test/read-only.test.js
           python3 -B test/php/smoke_http.py
           bash test/php/update_read_diagnostics.sh
-      - name: Package only the read diagnostics
+      - name: Package only the bounded read adapters
         run: |
           set -eu
           mkdir -p stage/php artifact
-          cp php/VkClient.php php/server.php stage/php/
+          cp php/VkClient.php php/ReadOnly.php php/tools.json php/server.php php/WallCollector.php php/SapiEventReader.php stage/php/
           cp deploy/update-read-diagnostics.sh stage/
           printf '%s\n' "$GITHUB_SHA" > stage/REVISION
-          tar -C stage -czf artifact/diagnostics.tgz php/VkClient.php php/server.php REVISION update-read-diagnostics.sh
+          tar -C stage -czf artifact/diagnostics.tgz php/VkClient.php php/ReadOnly.php php/tools.json php/server.php php/WallCollector.php php/SapiEventReader.php REVISION update-read-diagnostics.sh
           (cd artifact && sha256sum diagnostics.tgz > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
@@ -79,7 +79,7 @@ jobs:
     env:
       PROD_HOST: ${{ secrets.PROD_HOST }}
       PROD_USER: ${{ secrets.PROD_USER }}
-      BASELINE: ff56156313ed89d9ad42dc8dec7dd49c716ab78c
+      BASELINE: 8bcff6a73ffe2b9375d75d8f197b3eb4c5c51a6e
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -126,8 +126,9 @@ jobs:
           trap cleanup EXIT
           scp -q artifact/diagnostics.tgz "$target:$stage/"
           ssh "$target" tar -xzf "$stage/diagnostics.tgz" -C "$stage"
-          ssh "$target" /opt/php/8.4/bin/php -l "$stage/php/VkClient.php"
-          ssh "$target" /opt/php/8.4/bin/php -l "$stage/php/server.php"
+          for file in VkClient.php ReadOnly.php server.php WallCollector.php SapiEventReader.php; do
+            ssh "$target" /opt/php/8.4/bin/php -l "$stage/php/$file"
+          done
           applying=true
           ssh "$target" bash "$stage/update-read-diagnostics.sh" apply "$app" "$stage" "$BASELINE" "$GITHUB_SHA"
           applied=true
@@ -136,7 +137,7 @@ jobs:
           $config = require '/var/www/u3641285/data/vk-to-gpt/shared/config.php';
           echo $config['MCP_BEARER_TOKEN'];
           PHP
-          printf '%s\n' 'Diagnostics published. HTTPS, MCP and OAuth discovery verified.' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' 'Bounded read adapters published. HTTPS, MCP and OAuth discovery verified.' >> "$GITHUB_STEP_SUMMARY"
       - name: Remove temporary SSH files
         if: always()
         run: rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
