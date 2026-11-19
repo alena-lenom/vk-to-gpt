@@ -1,0 +1,75 @@
+name: REG.RU SSH preflight
+
+on:
+  push:
+    branches: [feat/php-mcp-http]
+    paths:
+      - ".github/workflows/hosting-preflight.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-host:
+    if: github.actor == 'alena-lenom'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: production
+    steps:
+      - name: Configure temporary SSH files
+        env:
+          SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          test -n "$SSH_KEY"
+          test -n "$KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Diagnose host-key pin without printing secrets
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+        run: |
+          set -euo pipefail
+          test -n "$PROD_HOST"
+          if ssh-keygen -y -P "" -f "$HOME/.ssh/id_ed25519" >/dev/null 2>&1; then
+            echo "private_key_format=valid"
+          else
+            echo "private_key_format=invalid"
+            exit 1
+          fi
+          if ssh-keygen -lf "$HOME/.ssh/known_hosts" > "$RUNNER_TEMP/known-host-fingerprints" 2>/dev/null; then
+            echo "known_hosts_format=valid"
+            awk '{print "pinned_host_key=" $2 " " $NF}' "$RUNNER_TEMP/known-host-fingerprints"
+          else
+            echo "known_hosts_format=invalid"
+            exit 1
+          fi
+          if ssh-keygen -F "$PROD_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null 2>&1; then
+            echo "target_host_has_pin=yes"
+          else
+            echo "target_host_has_pin=no"
+          fi
+          scan="$RUNNER_TEMP/scanned-host-key"
+          if ssh-keyscan -T 5 -t ed25519 "$PROD_HOST" 2>/dev/null > "$scan" && test -s "$scan"; then
+            ssh-keygen -lf "$scan" | awk '{print "observed_host_key=" $2 " " $NF}'
+          else
+            echo "observed_host_key=unavailable"
+          fi
+
+      - name: Verify read-only SSH login and key authorization
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+        run: |
+          set -euo pipefail
+          ssh-keygen -F "$PROD_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
+          actual=$(ssh-keygen -y -P "" -f "$HOME/.ssh/id_ed25519" | ssh-keygen -lf - | awk '{print $2}')
+          test "$actual" = 'SHA256:cg+i9bf8l22XOeOAmiDij7ho+/C2n1rKmZqtwDju350'
+          echo 'ci_private_matches_expected_public=yes'
+          ssh -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o LogLevel=ERROR -i "$HOME/.ssh/id_ed25519" "$PROD_USER@$PROD_HOST" 'set -eu; pins=$(ssh-keygen -lf "$HOME/.ssh/authorized_keys"); printf "%s\n" "$pins" | grep -q "SHA256:cg+i9bf8l22XOeOAmiDij7ho+/C2n1rKmZqtwDju350"; if printf "%s\n" "$pins" | grep -q "SHA256:LYyN/ZOIDN1AuAM+LZdECt2kDhUjPoqpyh8lYimWxBs"; then exit 1; fi; printf "ssh_login=ok\nci_public_authorized=yes\nexposed_public_revoked=yes\n"'

@@ -1,0 +1,193 @@
+name: REG.RU PHP deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_revision:
+        description: Exact candidate commit SHA to check
+        type: string
+        required: true
+      publish:
+        description: Publish the guarded read-only post-counter summary after tests
+        type: boolean
+        default: false
+      inspect_runtime:
+        description: Report credential variable presence from private configuration
+        type: boolean
+        default: false
+      read_probe:
+        description: Invoke read-only MCP wall collector from server without disclosing credentials
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vk-to-gpt-production
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      EXPECTED_REVISION: ${{ inputs.expected_revision }}
+    steps:
+      - name: Check the approved revision
+        run: test "$EXPECTED_REVISION" = "$GITHUB_SHA"
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          tools: composer:v2
+          extensions: curl, fileinfo, json, openssl, mbstring, pdo_sqlite, sqlite3
+          coverage: none
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Test candidate
+        run: |
+          set -eu
+          composer validate --no-check-publish
+          composer install --no-dev --no-interaction --prefer-dist --no-scripts
+          composer check-platform-reqs --no-dev
+          composer audit --locked --no-interaction
+          composer test
+          node test/php/contract.mjs
+          node --test test/read-only.test.js
+          python3 -B test/php/smoke_http.py
+          bash test/php/update_read_diagnostics.sh
+          php -l deploy/probe-wall.php
+      - name: Package only the bounded read-only analytics file
+        run: |
+          set -eu
+          mkdir -p stage/php artifact
+          cp php/WallCollector.php stage/php/
+          cp deploy/update-read-diagnostics.sh stage/
+          printf '%s\n' "$GITHUB_SHA" > stage/REVISION
+          tar -C stage -czf artifact/diagnostics.tgz php/WallCollector.php REVISION update-read-diagnostics.sh
+          (cd artifact && sha256sum diagnostics.tgz > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vk-to-gpt-php-${{ github.sha }}
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    if: inputs.publish && github.actor == 'alena-lenom' && github.ref == 'refs/heads/feat/php-mcp-http'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      PROD_HOST: ${{ secrets.PROD_HOST }}
+      PROD_USER: ${{ secrets.PROD_USER }}
+      BASELINE: 66726f80564dafe24adab25dd01bd113477231b5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: vk-to-gpt-php-${{ github.sha }}
+          path: artifact
+      - name: Configure trusted SSH
+        env:
+          SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          printf '%s\n' 'Host *' '  BatchMode yes' '  IdentitiesOnly yes' '  StrictHostKeyChecking yes' '  ConnectTimeout 15' > "$HOME/.ssh/config"
+          ssh-keygen -F "$PROD_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
+      - name: Update code and verify HTTPS and MCP
+        run: |
+          set -euo pipefail
+          target="$PROD_USER@$PROD_HOST"
+          app=/var/www/u3641285/data/vk-to-gpt/app
+          python3 -B deploy/verify.py --baseline "$RUNNER_TEMP/home.sha256"
+          (cd artifact && sha256sum -c SHA256SUMS)
+          stage=$(ssh "$target" 'umask 077; mktemp -d /tmp/vk-to-gpt-diagnostics.XXXXXXXX')
+          [[ $stage =~ ^/tmp/vk-to-gpt-diagnostics\.[a-zA-Z0-9]{8}$ ]]
+          applied=false
+          applying=false
+          cleanup() {
+            status=$?
+            if (( status )) && [[ $applied == true ]]; then
+              if ! ssh "$target" bash "$stage/update-read-diagnostics.sh" rollback "$app" "$stage" "$BASELINE" "$GITHUB_SHA"; then
+                echo "Rollback failed. Retained backup at $stage/backup" >&2
+                return "$status"
+              fi
+            elif (( status )) && [[ $applying == true ]]; then
+              echo "Update failed. Inspect any backup at $stage/backup" >&2
+              return "$status"
+            fi
+            ssh "$target" rm -rf -- "$stage"
+            return "$status"
+          }
+          trap cleanup EXIT
+          scp -q artifact/diagnostics.tgz "$target:$stage/"
+          ssh "$target" tar -xzf "$stage/diagnostics.tgz" -C "$stage"
+          for file in WallCollector.php; do
+            ssh "$target" /opt/php/8.4/bin/php -l "$stage/php/$file"
+          done
+          applying=true
+          ssh "$target" bash "$stage/update-read-diagnostics.sh" apply "$app" "$stage" "$BASELINE" "$GITHUB_SHA"
+          applied=true
+          [[ $(ssh "$target" cat "$app/REVISION") == "$GITHUB_SHA" ]]
+          ssh "$target" /opt/php/8.4/bin/php <<'PHP' | python3 -B deploy/verify.py "$RUNNER_TEMP/home.sha256"
+          <?php
+          $config = require '/var/www/u3641285/data/vk-to-gpt/shared/config.php';
+          echo $config['MCP_BEARER_TOKEN'];
+          PHP
+          ssh "$target" VK_PROBE_METRICS=1 /opt/php/8.4/bin/php < deploy/probe-wall.php
+          printf '%s\n' 'Guarded post metrics update published. Exact revision, HTTPS, MCP, OAuth and live post_metric_summary verified.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove temporary SSH files
+        if: always()
+        run: rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
+
+  inspect-runtime:
+    if: (inputs.inspect_runtime || inputs.read_probe) && github.actor == 'alena-lenom' && github.ref == 'refs/heads/feat/php-mcp-http'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: production
+    env:
+      PROD_HOST: ${{ secrets.PROD_HOST }}
+      PROD_USER: ${{ secrets.PROD_USER }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure trusted SSH
+        env:
+          SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          printf '%s\n' 'Host *' '  BatchMode yes' '  IdentitiesOnly yes' '  StrictHostKeyChecking yes' '  ConnectTimeout 15' > "$HOME/.ssh/config"
+          ssh-keygen -F "$PROD_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
+      - name: Report configured credential names only
+        if: inputs.inspect_runtime
+        run: |
+          ssh "$PROD_USER@$PROD_HOST" /opt/php/8.4/bin/php <<'PHP'
+          <?php
+          $config = require '/var/www/u3641285/data/vk-to-gpt/shared/config.php';
+          foreach (['VK_USER_TOKEN', 'VK_SERVICE_KEY', 'VK_COMMUNITY_TOKEN'] as $name) {
+              $configured = is_array($config) && isset($config[$name]) && is_string($config[$name]) && $config[$name] !== '';
+              echo $name.'='.($configured ? 'present' : 'missing')."\n";
+          }
+          PHP
+      - name: Probe deployed MCP read-only wall collection
+        if: inputs.read_probe
+        run: |
+          set -euo pipefail
+          ssh "$PROD_USER@$PROD_HOST" /opt/php/8.4/bin/php < deploy/probe-wall.php
+      - name: Remove temporary SSH files
+        if: always()
+        run: rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"

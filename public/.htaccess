@@ -1,0 +1,2 @@
+RewriteEngine On
+RewriteRule ^mcp/?$ mcp.php [L]

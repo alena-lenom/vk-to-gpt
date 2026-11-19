@@ -1,0 +1,234 @@
+[
+  {
+    "name": "vk_wall_get",
+    "description": "Read posts from the configured personal or community wall; community owner_id is negative",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "owner_id": {
+          "type": "integer"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "filter": {
+          "type": "string",
+          "enum": [
+            "all",
+            "owner",
+            "others"
+          ]
+        }
+      },
+      "required": [
+        "owner_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "vk_wall_collect",
+    "description": "Collect up to 300 post-counter records via paginated wall.get for one configured personal/community wall; returns source coverage and next_offset, not native reach or full comment history",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "owner_id": {
+          "type": "integer"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000000
+        },
+        "filter": {
+          "type": "string",
+          "enum": [
+            "all",
+            "owner",
+            "others"
+          ]
+        }
+      },
+      "required": [
+        "owner_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "vk_wall_get_by_id",
+    "description": "Read specified posts belonging to one configured wall",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "posts": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "posts"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "vk_wall_get_comments",
+    "description": "Read comments on a post from a configured personal or community wall",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "owner_id": {
+          "type": "integer"
+        },
+        "post_id": {
+          "type": "integer"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "owner_id",
+        "post_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "vk_users_get",
+    "description": "Read the configured owner's VK profile fields only",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "user_ids": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "user_ids"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "vk_groups_get_by_id",
+    "description": "Read the configured VK community information only",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "group_id": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "group_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "vk_stats_get",
+    "description": "Read available statistics for the configured community (requires an eligible user token)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "group_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp_from": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timestamp_to": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "interval": {
+          "type": "string",
+          "enum": [
+            "day",
+            "week",
+            "month",
+            "year",
+            "all"
+          ]
+        }
+      },
+      "required": [
+        "group_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "vk_post_reach",
+    "description": "Read available reach for posts in the configured community (token dependent)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "group_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "post_ids": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "group_id",
+        "post_ids"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "vk_sapi_wall_replies",
+    "description": "Read up to 50 observed community wall_reply_new events already stored by SAPI Callback; private source disabled until configured, not historical VK comment totals",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "group_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "post_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "since": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4102444800
+        }
+      },
+      "required": [
+        "group_id"
+      ],
+      "additionalProperties": false
+    }
+  }
+]
