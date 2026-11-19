@@ -95,3 +95,54 @@ test('VK rate limit retries and error responses do not expose token', async () =
     return true;
   });
 });
+
+test('public reads retry user token only for a token-type rejection', async () => {
+  const attempted = [];
+  const client = new VkClient({
+    serviceKey: 'public-key',
+    userToken: 'legacy-user',
+    fetcher: async (_url, options) => {
+      const token = new URLSearchParams(options.body).get('access_token');
+      attempted.push(token);
+      return { ok: true, json: async () => token === 'public-key'
+        ? { error: { error_code: 1051, error_msg: 'unavailable' } }
+        : { response: [{ id: 4 }] } };
+    },
+  });
+  assert.deepEqual(await client.call('wall.getById', { posts: '1_4' }), [{ id: 4 }]);
+  assert.deepEqual(attempted, ['public-key', 'legacy-user']);
+});
+
+test('privacy failures do not cause token fallback; diagnostics never reveal secrets', async () => {
+  const attempted = [];
+  const client = new VkClient({
+    serviceKey: 'public-key',
+    userToken: 'legacy-user',
+    fetcher: async (_url, options) => {
+      attempted.push(new URLSearchParams(options.body).get('access_token'));
+      return { ok: true, json: async () => ({
+        error: { error_code: 15, error_msg: 'secret-value', request_params: [{ key: 'access_token', value: 'secret-value' }] },
+      }) };
+    },
+  });
+  await assert.rejects(client.call('wall.getComments', { owner_id: 1, post_id: 4 }), (error) => {
+    assert.match(error.message, /15.*wall.getComments/);
+    assert.equal(error.message.includes('secret-value'), false);
+    return true;
+  });
+  assert.deepEqual(attempted, ['public-key']);
+});
+
+test('statistics never use a service key as fallback', async () => {
+  const attempted = [];
+  const client = new VkClient({
+    serviceKey: 'public-key',
+    userToken: 'legacy-user',
+    fetcher: async (_url, options) => {
+      attempted.push(new URLSearchParams(options.body).get('access_token'));
+      return { ok: true, json: async () => ({ error: { error_code: 1051 } }) };
+    },
+  });
+  await assert.rejects(client.call('stats.get', { group_id: 1 }), /1051/);
+  assert.deepEqual(attempted, ['legacy-user']);
+});
