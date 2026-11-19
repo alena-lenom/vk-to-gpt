@@ -15,6 +15,10 @@ on:
         description: Report credential variable presence from private configuration
         type: boolean
         default: false
+      read_probe:
+        description: Invoke read-only MCP wall collector from server without disclosing credentials
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -54,6 +58,7 @@ jobs:
           node --test test/read-only.test.js
           python3 -B test/php/smoke_http.py
           bash test/php/update_read_diagnostics.sh
+          php -l deploy/probe-wall.php
       - name: Package only the bounded read adapters
         run: |
           set -eu
@@ -143,7 +148,7 @@ jobs:
         run: rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
 
   inspect-runtime:
-    if: inputs.inspect_runtime && github.actor == 'alena-lenom' && github.ref == 'refs/heads/feat/php-mcp-http'
+    if: (inputs.inspect_runtime || inputs.read_probe) && github.actor == 'alena-lenom' && github.ref == 'refs/heads/feat/php-mcp-http'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -165,6 +170,7 @@ jobs:
           printf '%s\n' 'Host *' '  BatchMode yes' '  IdentitiesOnly yes' '  StrictHostKeyChecking yes' '  ConnectTimeout 15' > "$HOME/.ssh/config"
           ssh-keygen -F "$PROD_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
       - name: Report configured credential names only
+        if: inputs.inspect_runtime
         run: |
           ssh "$PROD_USER@$PROD_HOST" /opt/php/8.4/bin/php <<'PHP'
           <?php
@@ -174,6 +180,11 @@ jobs:
               echo $name.'='.($configured ? 'present' : 'missing')."\n";
           }
           PHP
+      - name: Probe deployed MCP read-only wall collection
+        if: inputs.read_probe
+        run: |
+          set -euo pipefail
+          ssh "$PROD_USER@$PROD_HOST" /opt/php/8.4/bin/php < deploy/probe-wall.php
       - name: Remove temporary SSH files
         if: always()
         run: rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
