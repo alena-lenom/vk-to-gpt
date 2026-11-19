@@ -56,10 +56,24 @@ function buildServer(VkClient $client, string $sessionDirectory): Server
                     return new CallToolResult([new TextContent(json_encode($result, JSON_THROW_ON_ERROR))]);
                 } catch (\InvalidArgumentException $error) {
                     return CallToolResult::error([new TextContent($error->getMessage())]);
-                } catch (\Throwable) {
+                } catch (VkApiException $error) {
+                    // Writes may already have happened: keep their failure opaque and non-retryable.
                     return CallToolResult::error([new TextContent($isWrite
                         ? 'VK write failed (unconfigured, unavailable, denied, or failed; check the wall before retrying)'
-                        : 'VK read failed (unconfigured, unavailable, denied, or failed)')]);
+                        : ($error->vkCode === null
+                            ? 'VK read failed (transport or malformed API response)'
+                            : 'VK read failed: '.$method.' returned VK API error '.$error->vkCode))]);
+                } catch (\Throwable $error) {
+                    $missingToken = !$isWrite && in_array($error->getMessage(), [
+                        'VK_USER_TOKEN is not configured',
+                        'VK_SERVICE_KEY or VK_USER_TOKEN is not configured',
+                        'VK_SERVICE_KEY, VK_USER_TOKEN, or VK_COMMUNITY_TOKEN is not configured',
+                    ], true);
+                    return CallToolResult::error([new TextContent($isWrite
+                        ? 'VK write failed (unconfigured, unavailable, denied, or failed; check the wall before retrying)'
+                        : ($missingToken
+                            ? 'VK read failed: required VK token is not configured'
+                            : 'VK read failed (transport or unexpected server error)'))]);
                 }
             }
         });
