@@ -498,6 +498,24 @@ jobs:
               $enabled = is_array($events) ? ($events['wall_reply_new'] ?? null) : null;
               echo 'vk_wall_reply_new_enabled='.($enabled === 1 || $enabled === true ? 'yes' : ($enabled === 0 || $enabled === false ? 'no' : 'unknown'))."\n";
           }
+          // Bounded read-only eligibility probes with the existing community key.
+          // Only status or VK error code leaves this protected job, never response bodies.
+          foreach ([
+              'get_by_id' => ['wall.getById', ['posts' => '-220996873_163']],
+              'comments' => ['wall.getComments', ['owner_id' => -220996873, 'post_id' => 163, 'count' => 1]],
+              'statistics' => ['stats.get', ['group_id' => 220996873]],
+              'post_reach' => ['stats.getPostReach', ['owner_id' => -220996873, 'post_ids' => '163']],
+          ] as $label => [$method, $params]) {
+              $probe = $request($method, $params);
+              if ($probe === null) {
+                  echo 'community_'.$label.'=transport_unavailable'."\n";
+              } elseif (isset($probe['error'])) {
+                  $code = $probe['error']['error_code'] ?? null;
+                  echo 'community_'.$label.'_error_code='.(is_int($code) ? $code : 'unknown')."\n";
+              } else {
+                  echo 'community_'.$label.'=available'."\n";
+              }
+          }
           $service = is_array($config) ? ($config['VK_SERVICE_KEY'] ?? null) : null;
           if (!is_string($service) || $service === '') {
               echo "sapi_app_metadata=service_credential_unavailable\n";
