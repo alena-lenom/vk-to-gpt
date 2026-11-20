@@ -210,24 +210,47 @@ jobs:
           (cd artifact && sha256sum -c SHA256SUMS)
           stage2=$(ssh "$target" 'umask 077; mktemp -d /tmp/vk-to-gpt-callback.XXXXXXXX')
           [[ $stage2 =~ ^/tmp/vk-to-gpt-callback\.[a-zA-Z0-9]{8}$ ]]
-          applied=false
+          callback_applied=false
+          mcp_applied=false
+          bridge_prepared=false
           cleanup() {
             status=$?
-            if (( status )) && [[ $applied == true ]]; then
-              if ! ssh "$target" bash "$stage2/update-webroot-file.sh" rollback "$webroot" "$stage2" "$GITHUB_SHA" callback.php; then
-                echo "Callback rollback failed. Retained backup at $stage2/backup" >&2
-                return "$status"
+            rollback_failed=false
+            if (( status )); then
+              if [[ $callback_applied == true ]]; then
+                ssh "$target" bash "$stage2/update-webroot-file.sh" rollback "$webroot" "$stage2" "$GITHUB_SHA" callback.php || rollback_failed=true
+              fi
+              if [[ $mcp_applied == true ]]; then
+                ssh "$target" bash "$stage2/update-webroot-file.sh" rollback "$webroot" "$stage2" "$GITHUB_SHA" mcp.php || rollback_failed=true
+              fi
+              if [[ $bridge_prepared == true ]]; then
+                ssh "$target" /opt/php/8.4/bin/php "$stage2/callback-bridge.php" rollback "$stage2" "$webroot" || rollback_failed=true
               fi
             fi
-            ssh "$target" rm -rf -- "$stage2"
+            if [[ $rollback_failed == true ]]; then
+              echo "Callback bridge rollback incomplete. Staging backup retained." >&2
+            else
+              ssh "$target" rm -rf -- "$stage2" || true
+            fi
             return "$status"
           }
           trap cleanup EXIT
           scp -q artifact/diagnostics.tgz "$target:$stage2/"
           ssh "$target" tar -xzf "$stage2/diagnostics.tgz" -C "$stage2"
           ssh "$target" /opt/php/8.4/bin/php -l "$stage2/callback.php"
+          if [[ "${{ inputs.publish_callback_bridge }}" == "true" ]]; then
+            # No production changes until the existing MCP wrapper matches the allowed legacy variant.
+            ssh "$target" /opt/php/8.4/bin/php -l "$stage2/mcp.php"
+            ssh "$target" /opt/php/8.4/bin/php -l "$stage2/callback-bridge.php"
+            ssh "$target" /opt/php/8.4/bin/php "$stage2/callback-bridge.php" verify-wrapper "$stage2" "$webroot"
+            python3 -B deploy/verify.py --baseline "$RUNNER_TEMP/home.sha256"
+            ssh "$target" /opt/php/8.4/bin/php "$stage2/callback-bridge.php" prepare "$stage2" "$webroot"
+            bridge_prepared=true
+            ssh "$target" bash "$stage2/update-webroot-file.sh" apply "$webroot" "$stage2" "$GITHUB_SHA" mcp.php
+            mcp_applied=true
+          fi
           ssh "$target" bash "$stage2/update-webroot-file.sh" apply "$webroot" "$stage2" "$GITHUB_SHA" callback.php
-          applied=true
+          callback_applied=true
           code=$(curl -s -o /dev/null -w '%{http_code}' https://vk.tattoomystery.ru/callback.php)
           [[ $code == 400 ]]
           # Check live VK handshake against private config without printing its value.
@@ -260,6 +283,30 @@ jobs:
               exit(1);
           }
           PHP
+          if [[ "${{ inputs.publish_callback_bridge }}" == "true" ]]; then
+            ssh "$target" /opt/php/8.4/bin/php "$stage2/callback-bridge.php" check "$stage2" "$webroot"
+            ssh "$target" /opt/php/8.4/bin/php <<'PHP'
+          <?php
+          ini_set('display_errors', '0');
+          try {
+              require '/var/www/u3641285/data/vk-to-gpt/app/php/SapiEventReader.php';
+              $config = require '/var/www/u3641285/data/vk-to-gpt/shared/config.php';
+              $result = \\VkToGpt\\SapiEventReader::read($config['VK_SAPI_EVENTS_DIR'] ?? null,
+                  ['group_id' => 220996873, 'limit' => 1, 'since' => 0]);
+              if (($result['status'] ?? null) !== 'AVAILABLE') exit(1);
+              echo "callback_reader=available\\n";
+          } catch (Throwable) {
+              fwrite(STDERR, "callback_reader=unavailable\\n");
+              exit(1);
+          }
+          PHP
+            ssh "$target" /opt/php/8.4/bin/php <<'PHP' | python3 -B deploy/verify.py "$RUNNER_TEMP/home.sha256"
+          <?php
+          $config = require '/var/www/u3641285/data/vk-to-gpt/shared/config.php';
+          echo $config['MCP_BEARER_TOKEN'];
+          PHP
+            echo "callback_bridge=verified" >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "callback_endpoint=http_${code}" >> "$GITHUB_STEP_SUMMARY"
           echo "callback_confirmation=verified" >> "$GITHUB_STEP_SUMMARY"
       - name: Remove temporary SSH files
