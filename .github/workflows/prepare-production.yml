@@ -254,7 +254,7 @@ jobs:
         run: rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
 
   inspect-runtime:
-    if: (inputs.inspect_runtime || inputs.read_probe) && github.actor == 'alena-lenom' && (github.ref == 'refs/heads/feat/php-mcp-http' || (github.ref == 'refs/heads/feat/callback-api-receiver' && inputs.inspect_runtime && !inputs.read_probe))
+    if: (inputs.inspect_runtime || inputs.read_probe) && github.actor == 'alena-lenom' && github.ref == 'refs/heads/feat/php-mcp-http'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -276,52 +276,8 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           printf '%s\n' 'Host *' '  BatchMode yes' '  IdentitiesOnly yes' '  StrictHostKeyChecking yes' '  ConnectTimeout 15' > "$HOME/.ssh/config"
           ssh-keygen -F "$PROD_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
-      - name: Inspect callback event bridge without revealing private values
-        if: inputs.inspect_runtime && github.ref == 'refs/heads/feat/callback-api-receiver'
-        run: |
-          set -euo pipefail
-          ssh "$PROD_USER@$PROD_HOST" /opt/php/8.4/bin/php <<'PHP'
-          <?php
-          ini_set('display_errors', '0');
-          try {
-              $base = '/var/www/u3641285/data/vk-to-gpt';
-              $web = '/var/www/u3641285/data/www/vk.tattoomystery.ru';
-              $config = require $base.'/shared/config.php';
-              if (!is_array($config)) throw new RuntimeException('invalid config');
-              $configured = $config['VK_SAPI_EVENTS_DIR'] ?? null;
-              $present = is_string($configured) && $configured !== '';
-              $directory = $present ? realpath($configured) : false;
-              $webDirectory = realpath($web);
-              $valid = $directory !== false && is_dir($directory) && !is_link($configured)
-                  && ($webDirectory === false || !str_starts_with($directory.'/', $webDirectory.'/'));
-              $bootstrap = $web.'/mcp.php';
-              $bootstrapSource = is_file($bootstrap) && is_readable($bootstrap)
-                  ? file_get_contents($bootstrap) : false;
-              $forwarded = is_string($bootstrapSource)
-                  && str_contains($bootstrapSource, "'VK_SAPI_EVENTS_DIR'");
-              foreach ([
-                  'callback_events_path_configured' => $present,
-                  'callback_events_path_resolves' => $directory !== false,
-                  'callback_events_path_is_symlink' => $present && is_link($configured),
-                  'callback_events_parent_directory_exists' => $present && is_dir(dirname($configured)),
-                  'callback_events_inside_webroot' => $directory !== false && $webDirectory !== false
-                      && str_starts_with($directory.'/', $webDirectory.'/'),
-                  'callback_events_directory_valid' => $valid,
-                  'callback_events_cli_readable' => $directory !== false && is_readable($directory),
-                  'callback_events_cli_writable' => $directory !== false && is_writable($directory),
-                  'deployed_mcp_wrapper_present' => is_string($bootstrapSource),
-                  'deployed_mcp_wrapper_forwards_events_dir' => $forwarded,
-                  'deployed_sapi_reader_present' => is_file($base.'/app/php/SapiEventReader.php'),
-              ] as $key => $value) {
-                  echo $key.'='.($value ? 'yes' : 'no')."\n";
-              }
-          } catch (Throwable) {
-              echo "callback_bridge_diagnostic=unavailable\n";
-              exit(1);
-          }
-          PHP
       - name: Report configured credential names only
-        if: inputs.inspect_runtime && github.ref == 'refs/heads/feat/php-mcp-http'
+        if: inputs.inspect_runtime
         run: |
           ssh "$PROD_USER@$PROD_HOST" /opt/php/8.4/bin/php <<'PHP'
           <?php
@@ -407,6 +363,71 @@ jobs:
           } catch (Throwable) {
               echo "callback_diagnostic=unavailable\n";
               exit(1);
+          }
+          PHP
+      - name: Read VK Callback server status without exposing its secrets
+        run: |
+          set -euo pipefail
+          ssh "$PROD_USER@$PROD_HOST" /opt/php/8.4/bin/php <<'PHP'
+          <?php
+          ini_set('display_errors', '0');
+          $config = require '/var/www/u3641285/data/vk-to-gpt/shared/config.php';
+          $token = is_array($config) ? ($config['VK_COMMUNITY_TOKEN'] ?? null) : null;
+          if (!is_string($token) || $token === '') {
+              echo "vk_callback_api=community_token_unavailable\n";
+              exit;
+          }
+          $request = static function (string $method, array $params) use ($token): ?array {
+              $handle = curl_init('https://api.vk.ru/method/'.$method);
+              if ($handle === false) return null;
+              curl_setopt_array($handle, [
+                  CURLOPT_POST => true,
+                  CURLOPT_POSTFIELDS => http_build_query($params + ['access_token' => $token, 'v' => '5.199']),
+                  CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded'],
+                  CURLOPT_RETURNTRANSFER => true,
+                  CURLOPT_TIMEOUT => 15,
+                  CURLOPT_FOLLOWLOCATION => false,
+              ]);
+              $response = curl_exec($handle);
+              $status = curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+              if ($status !== 200 || !is_string($response)) return null;
+              $decoded = json_decode($response, true);
+              return is_array($decoded) ? $decoded : null;
+          };
+          $servers = $request('groups.getCallbackServers', ['group_id' => 220996873]);
+          if ($servers === null) {
+              echo "vk_callback_api=transport_unavailable\n";
+              exit;
+          }
+          if (isset($servers['error'])) {
+              $code = $servers['error']['error_code'] ?? null;
+              echo 'vk_callback_api_error_code='.(is_int($code) ? $code : 'unknown')."\n";
+              exit;
+          }
+          $items = $servers['response']['items'] ?? null;
+          if (!is_array($items)) {
+              echo "vk_callback_api=unexpected_response\n";
+              exit;
+          }
+          $matches = array_values(array_filter($items, static fn($item): bool =>
+              is_array($item) && ($item['url'] ?? null) === 'https://vk.tattoomystery.ru/callback.php'));
+          echo 'vk_matching_callback_servers='.count($matches)."\n";
+          if (count($matches) !== 1) exit;
+          $server = $matches[0];
+          $status = $server['status'] ?? null;
+          echo 'vk_callback_server_status='.(in_array($status, ['ok', 'wait', 'failed', 'unconfigured'], true) ? $status : 'unknown')."\n";
+          $serverId = $server['id'] ?? null;
+          if (!is_int($serverId) || $serverId <= 0) exit;
+          $settings = $request('groups.getCallbackSettings', ['group_id' => 220996873, 'server_id' => $serverId]);
+          if ($settings === null) {
+              echo "vk_callback_events=transport_unavailable\n";
+          } elseif (isset($settings['error'])) {
+              $code = $settings['error']['error_code'] ?? null;
+              echo 'vk_callback_settings_error_code='.(is_int($code) ? $code : 'unknown')."\n";
+          } else {
+              $events = $settings['response']['events'] ?? null;
+              $enabled = is_array($events) ? ($events['wall_reply_new'] ?? null) : null;
+              echo 'vk_wall_reply_new_enabled='.($enabled === 1 || $enabled === true ? 'yes' : ($enabled === 0 || $enabled === false ? 'no' : 'unknown'))."\n";
           }
           PHP
       - name: Remove temporary SSH files
