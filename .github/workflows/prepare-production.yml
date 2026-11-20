@@ -164,6 +164,32 @@ jobs:
           target="$PROD_USER@$PROD_HOST"
           webroot=${PROD_PATH:?PROD_PATH variable is required}
           [[ $webroot =~ ^/var/www/u[0-9]+/data/www/vk[.]tattoomystery[.]ru$ ]]
+          # Validate the existing private config before touching the public endpoint.
+          ssh "$target" /opt/php/8.4/bin/php <<'PHP'
+          <?php
+          ini_set('display_errors', '0');
+          try {
+              $config = require '/var/www/u3641285/data/vk-to-gpt/shared/config.php';
+              if (!is_array($config)) throw new RuntimeException('Invalid config');
+              $valid = true;
+              foreach (['VK_COMMUNITY_ID','VK_CALLBACK_CONFIRMATION','VK_CALLBACK_SECRET'] as $name) {
+                  $value = $config[$name] ?? null;
+                  $present = is_string($value) && $value !== '' && !str_contains($value, "\0");
+                  echo $name.'='.($present ? 'present' : 'missing')."\n";
+                  $valid = $valid && $present;
+              }
+              $dir = $config['VK_SAPI_EVENTS_DIR'] ?? null;
+              echo 'VK_SAPI_EVENTS_DIR='.(is_string($dir) && $dir !== '' ? 'present' : 'missing')."\n";
+              if (($config['VK_COMMUNITY_ID'] ?? null) !== '220996873') {
+                  echo "callback_community_binding=invalid\n";
+                  $valid = false;
+              }
+              if (!$valid) exit(1);
+          } catch (Throwable) {
+              echo "callback_config=unavailable\n";
+              exit(1);
+          }
+          PHP
           (cd artifact && sha256sum -c SHA256SUMS)
           stage2=$(ssh "$target" 'umask 077; mktemp -d /tmp/vk-to-gpt-callback.XXXXXXXX')
           [[ $stage2 =~ ^/tmp/vk-to-gpt-callback\.[a-zA-Z0-9]{8}$ ]]
@@ -187,7 +213,38 @@ jobs:
           applied=true
           code=$(curl -s -o /dev/null -w '%{http_code}' https://vk.tattoomystery.ru/callback.php)
           [[ $code == 400 ]]
+          # Check live VK handshake against private config without printing its value.
+          ssh "$target" /opt/php/8.4/bin/php <<'PHP'
+          <?php
+          ini_set('display_errors', '0');
+          try {
+              $config = require '/var/www/u3641285/data/vk-to-gpt/shared/config.php';
+              $expected = $config['VK_CALLBACK_CONFIRMATION'] ?? null;
+              if (!is_string($expected) || $expected === '') exit(1);
+              $handle = curl_init('https://vk.tattoomystery.ru/callback.php');
+              if ($handle === false) exit(1);
+              curl_setopt_array($handle, [
+                  CURLOPT_POST => true,
+                  CURLOPT_POSTFIELDS => json_encode(['type' => 'confirmation', 'group_id' => 220996873], JSON_THROW_ON_ERROR),
+                  CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+                  CURLOPT_RETURNTRANSFER => true,
+                  CURLOPT_FOLLOWLOCATION => false,
+                  CURLOPT_TIMEOUT => 15,
+              ]);
+              $body = curl_exec($handle);
+              $status = curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+              if ($status !== 200 || !is_string($body) || !hash_equals($expected, $body)) {
+                  fwrite(STDERR, "Callback confirmation check failed\n");
+                  exit(1);
+              }
+              echo "callback_confirmation=verified\n";
+          } catch (Throwable) {
+              fwrite(STDERR, "Callback confirmation check failed\n");
+              exit(1);
+          }
+          PHP
           echo "callback_endpoint=http_${code}" >> "$GITHUB_STEP_SUMMARY"
+          echo "callback_confirmation=verified" >> "$GITHUB_STEP_SUMMARY"
       - name: Remove temporary SSH files
         if: always()
         run: rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
