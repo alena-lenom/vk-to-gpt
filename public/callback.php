@@ -66,11 +66,13 @@ if ($payload['type'] !== 'wall_reply_new' || !isset($payload['event_id'])) {
 $object = $payload['object'] ?? null;
 $commentId   = is_array($object) && is_int($object['id'] ?? null) ? $object['id'] : null;
 $postId      = is_array($object) && is_int($object['post_id'] ?? null) ? $object['post_id'] : null;
-$postOwnerId = is_array($object) && is_int($object['post_owner_id'] ?? null) ? $object['post_owner_id'] : null;
+$postOwnerId = is_array($object) && is_int($object['owner_id'] ?? null) ? $object['owner_id'] : null;
 $fromId      = is_array($object) && is_int($object['from_id'] ?? null) ? $object['from_id'] : null;
 $date        = is_array($object) && is_int($object['date'] ?? null) ? $object['date'] : null;
 $text        = is_array($object) && is_string($object['text'] ?? null) ? $object['text'] : '';
-if ($commentId === null || $postId === null || $postOwnerId !== -$payload['group_id']) {
+if ($commentId === null || $commentId <= 0 || $postId === null || $postId <= 0
+    || $postOwnerId !== -$payload['group_id'] || !is_string($object['text'] ?? null)
+    || !is_string($payload['event_id'] ?? null) || $payload['event_id'] === '') {
     exit('ok'); // unexpected provenance: skip, never persist
 }
 
@@ -91,14 +93,21 @@ $event = [
 ];
 
 $root = is_string($eventsDir) ? realpath($eventsDir) : false;
-if ($root === false || !is_dir($root) || !is_writable($root)) {
-    http_response_code(500); // config gap must stay visible in the VK admin panel
-    exit('ok');
+$webroot = realpath(__DIR__);
+if ($root === false || is_link((string) $eventsDir) || !is_dir($root) || !is_writable($root)
+    || ($webroot !== false && ($root === $webroot || str_starts_with($root.'/', $webroot.'/')))) {
+    http_response_code(503);
+    exit('unavailable');
 }
-$name = 'event-' . hash('sha256', $payload['group_id'] . '|' . (string) $payload['event_id']) . '.json';
-file_put_contents(
-    $root . '/' . $name,
-    json_encode($event, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
-    LOCK_EX
-);
+$name = 'event-' . hash('sha256', $payload['group_id'] . '|' . $payload['event_id']) . '.json';
+try {
+    $record = json_encode($event, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+} catch (JsonException) {
+    http_response_code(400);
+    exit('bad request');
+}
+if (strlen($record) > 16384 || file_put_contents($root . '/' . $name, $record, LOCK_EX) === false) {
+    http_response_code(503);
+    exit('unavailable');
+}
 exit('ok');
