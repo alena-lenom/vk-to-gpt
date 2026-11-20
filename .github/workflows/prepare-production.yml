@@ -64,6 +64,7 @@ jobs:
           bash test/php/update_read_diagnostics.sh
           php -l deploy/probe-wall.php
           php -l public/callback.php
+          python3 -B test/php/callback_confirmation.py
           bash -n deploy/update-webroot-file.sh
       - name: Package the bounded publish set
         run: |
