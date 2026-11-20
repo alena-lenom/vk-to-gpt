@@ -162,7 +162,7 @@ jobs:
           set -euo pipefail
           target="$PROD_USER@$PROD_HOST"
           webroot=${PROD_PATH:?PROD_PATH variable is required}
-          [[ $webroot =~ ^/var/www/u[0-9]+/data/[^/]+$ ]]
+          [[ $webroot =~ ^/var/www/u[0-9]+/data/www/vk[.]tattoomystery[.]ru$ ]]
           (cd artifact && sha256sum -c SHA256SUMS)
           stage2=$(ssh "$target" 'umask 077; mktemp -d /tmp/vk-to-gpt-callback.XXXXXXXX')
           [[ $stage2 =~ ^/tmp/vk-to-gpt-callback\.[a-zA-Z0-9]{8}$ ]]
