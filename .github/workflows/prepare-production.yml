@@ -23,6 +23,10 @@ on:
         description: Invoke read-only MCP wall collector from server without disclosing credentials
         type: boolean
         default: false
+      diagnose_callback:
+        description: Read-only check of protected callback and MCP reader wiring
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -327,6 +331,67 @@ jobs:
         run: |
           set -euo pipefail
           ssh "$PROD_USER@$PROD_HOST" /opt/php/8.4/bin/php < deploy/probe-wall.php
+      - name: Remove temporary SSH files
+        if: always()
+        run: rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
+
+  diagnose-callback:
+    if: github.actor == 'alena-lenom' && github.ref == 'refs/heads/feat/callback-api-receiver' && inputs.diagnose_callback
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: production
+    env:
+      PROD_HOST: ${{ secrets.PROD_HOST }}
+      PROD_USER: ${{ secrets.PROD_USER }}
+    steps:
+      - name: Configure trusted SSH
+        env:
+          SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          printf '%s\n' 'Host *' '  BatchMode yes' '  IdentitiesOnly yes' '  StrictHostKeyChecking yes' '  ConnectTimeout 15' > "$HOME/.ssh/config"
+          ssh-keygen -F "$PROD_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
+      - name: Inspect protected config and installed reader without secret values
+        run: |
+          ssh "$PROD_USER@$PROD_HOST" /opt/php/8.4/bin/php <<'PHP'
+          <?php
+          ini_set('display_errors', '0');
+          try {
+              $base = '/var/www/u3641285/data/vk-to-gpt';
+              $webroot = '/var/www/u3641285/data/www/vk.tattoomystery.ru';
+              $config = require $base.'/shared/config.php';
+              if (!is_array($config)) throw new RuntimeException('Invalid config');
+              $dir = $config['VK_SAPI_EVENTS_DIR'] ?? null;
+              $bound = ($config['VK_COMMUNITY_ID'] ?? null) === '220996873';
+              $root = is_string($dir) && $dir !== '' ? realpath($dir) : false;
+              $private = $root !== false && $root !== $webroot
+                  && !str_starts_with($root.'/', $webroot.'/') && !is_link($dir);
+              $ready = $private && is_dir($root);
+              $files = [
+                  'mcp_wrapper_event_binding' => [$webroot.'/mcp.php', 'VK_SAPI_EVENTS_DIR'],
+                  'mcp_server_event_reader' => [$base.'/app/php/server.php', 'VK_SAPI_EVENTS_DIR'],
+                  'mcp_reader_installed' => [$base.'/app/php/SapiEventReader.php', 'NOT_CONFIGURED'],
+              ];
+              echo 'community_bound='.($bound ? 'yes' : 'no')."\n";
+              echo 'event_directory_configured='.(is_string($dir) && $dir !== '' ? 'yes' : 'no')."\n";
+              echo 'event_directory_exists='.($ready ? 'yes' : 'no')."\n";
+              echo 'event_directory_readable='.($ready && is_readable($root) ? 'yes' : 'no')."\n";
+              echo 'event_directory_writable='.($ready && is_writable($root) ? 'yes' : 'no')."\n";
+              foreach ($files as $label => [$path, $needle]) {
+                  $source = is_file($path) && is_readable($path) ? file_get_contents($path) : false;
+                  echo $label.'='.(is_string($source) && str_contains($source, $needle) ? 'yes' : 'no')."\n";
+              }
+          } catch (Throwable) {
+              echo "callback_diagnostic=unavailable\n";
+              exit(1);
+          }
+          PHP
       - name: Remove temporary SSH files
         if: always()
         run: rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
