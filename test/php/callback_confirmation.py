@@ -13,7 +13,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 with tempfile.TemporaryDirectory() as tmp:
     storage = pathlib.Path(tmp)
     (storage / "runtime").mkdir()
-    (storage / "runtime" / "vk-callback-confirmation.txt").write_text("file-token\\n")
+    (storage / "runtime" / "vk-callback-confirmation.txt").write_text("file-token")
     env = dict(os.environ, SAPI_STORAGE_ROOT=tmp, VK_COMMUNITY_ID="220996873",
                VK_CALLBACK_CONFIRMATION="env-token", VK_CALLBACK_SECRET="test-secret")
     proc = subprocess.Popen(["php", "-S", "127.0.0.1:18991", "-t", str(ROOT / "public")],
