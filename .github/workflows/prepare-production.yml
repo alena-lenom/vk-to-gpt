@@ -291,12 +291,12 @@ jobs:
           try {
               require '/var/www/u3641285/data/vk-to-gpt/app/php/SapiEventReader.php';
               $config = require '/var/www/u3641285/data/vk-to-gpt/shared/config.php';
-              $result = \\VkToGpt\\SapiEventReader::read($config['VK_SAPI_EVENTS_DIR'] ?? null,
+              $result = \VkToGpt\SapiEventReader::read($config['VK_SAPI_EVENTS_DIR'] ?? null,
                   ['group_id' => 220996873, 'limit' => 1, 'since' => 0]);
               if (($result['status'] ?? null) !== 'AVAILABLE') exit(1);
-              echo "callback_reader=available\\n";
+              echo "callback_reader=available\n";
           } catch (Throwable) {
-              fwrite(STDERR, "callback_reader=unavailable\\n");
+              fwrite(STDERR, "callback_reader=unavailable\n");
               exit(1);
           }
           PHP
@@ -490,6 +490,38 @@ jobs:
               echo 'vk_wall_reply_new_enabled='.($enabled === 1 || $enabled === true ? 'yes' : ($enabled === 0 || $enabled === false ? 'no' : 'unknown'))."\n";
           }
           PHP
+      - name: Remove temporary SSH files
+        if: always()
+        run: rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
+
+  activate-callback:
+    if: github.actor == 'alena-lenom' && github.ref == 'refs/heads/feat/callback-api-receiver' && inputs.publish_callback && inputs.publish_callback_bridge && inputs.enable_wall_reply_new
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    environment: production
+    env:
+      PROD_HOST: ${{ secrets.PROD_HOST }}
+      PROD_USER: ${{ secrets.PROD_USER }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure trusted SSH
+        env:
+          SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          printf '%s\n' 'Host *' '  BatchMode yes' '  IdentitiesOnly yes' '  StrictHostKeyChecking yes' '  ConnectTimeout 15' > "$HOME/.ssh/config"
+          ssh-keygen -F "$PROD_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
+      - name: Enable only wall_reply_new on the confirmed VK server
+        run: |
+          set -euo pipefail
+          ssh "$PROD_USER@$PROD_HOST" /opt/php/8.4/bin/php < deploy/enable-wall-reply-callback.php
+          echo "vk_wall_reply_new=verified" >> "$GITHUB_STEP_SUMMARY"
       - name: Remove temporary SSH files
         if: always()
         run: rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
