@@ -289,11 +289,20 @@ jobs:
           <?php
           ini_set('display_errors', '0');
           try {
+              // In CLI, DOCUMENT_ROOT is blank and realpath('') points to cwd.
+              // Set the actual webroot to check the same boundary as web PHP.
+              $_SERVER['DOCUMENT_ROOT'] = '/var/www/u3641285/data/www/vk.tattoomystery.ru';
               require '/var/www/u3641285/data/vk-to-gpt/app/php/SapiEventReader.php';
               $config = require '/var/www/u3641285/data/vk-to-gpt/shared/config.php';
               $result = \VkToGpt\SapiEventReader::read($config['VK_SAPI_EVENTS_DIR'] ?? null,
                   ['group_id' => 220996873, 'limit' => 1, 'since' => 0]);
-              if (($result['status'] ?? null) !== 'AVAILABLE') exit(1);
+              $status = $result['status'] ?? null;
+              if ($status !== 'AVAILABLE') {
+                  fwrite(STDERR, "callback_reader_status=".(
+                      in_array($status, ['NOT_CONFIGURED','UNAVAILABLE'], true) ? $status : 'unknown'
+                  )."\n");
+                  exit(1);
+              }
               echo "callback_reader=available\n";
           } catch (Throwable) {
               fwrite(STDERR, "callback_reader=unavailable\n");
