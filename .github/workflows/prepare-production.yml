@@ -301,9 +301,14 @@ jobs:
                   && str_contains($bootstrapSource, "'VK_SAPI_EVENTS_DIR'");
               foreach ([
                   'callback_events_path_configured' => $present,
+                  'callback_events_path_resolves' => $directory !== false,
+                  'callback_events_path_is_symlink' => $present && is_link($configured),
+                  'callback_events_parent_directory_exists' => $present && is_dir(dirname($configured)),
+                  'callback_events_inside_webroot' => $directory !== false && $webDirectory !== false
+                      && str_starts_with($directory.'/', $webDirectory.'/'),
                   'callback_events_directory_valid' => $valid,
-                  'callback_events_cli_readable' => $valid && is_readable($directory),
-                  'callback_events_cli_writable' => $valid && is_writable($directory),
+                  'callback_events_cli_readable' => $directory !== false && is_readable($directory),
+                  'callback_events_cli_writable' => $directory !== false && is_writable($directory),
                   'deployed_mcp_wrapper_present' => is_string($bootstrapSource),
                   'deployed_mcp_wrapper_forwards_events_dir' => $forwarded,
                   'deployed_sapi_reader_present' => is_file($base.'/app/php/SapiEventReader.php'),
