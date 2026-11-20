@@ -374,10 +374,13 @@ jobs:
               if (!is_array($config)) throw new RuntimeException('Invalid config');
               $dir = $config['VK_SAPI_EVENTS_DIR'] ?? null;
               $bound = ($config['VK_COMMUNITY_ID'] ?? null) === '220996873';
-              $root = is_string($dir) && $dir !== '' ? realpath($dir) : false;
-              $private = $root !== false && $root !== $webroot
-                  && !str_starts_with($root.'/', $webroot.'/') && !is_link($dir);
-              $ready = $private && is_dir($root);
+              $absolute = is_string($dir) && str_starts_with($dir, '/');
+              $root = $absolute ? realpath($dir) : false;
+              $isDirectory = $root !== false && is_dir($root);
+              $underWebroot = $root !== false
+                  && ($root === $webroot || str_starts_with($root.'/', $webroot.'/'));
+              $private = $isDirectory && !$underWebroot && !is_link($dir);
+              $ready = $private;
               $files = [
                   'mcp_wrapper_event_binding' => [$webroot.'/mcp.php', 'VK_SAPI_EVENTS_DIR'],
                   'mcp_server_event_reader' => [$base.'/app/php/server.php', 'VK_SAPI_EVENTS_DIR'],
@@ -385,9 +388,18 @@ jobs:
               ];
               echo 'community_bound='.($bound ? 'yes' : 'no')."\n";
               echo 'event_directory_configured='.(is_string($dir) && $dir !== '' ? 'yes' : 'no')."\n";
+              echo 'event_path_absolute='.($absolute ? 'yes' : 'no')."\n";
+              echo 'event_path_resolves='.($root !== false ? 'yes' : 'no')."\n";
+              echo 'event_path_directory='.($isDirectory ? 'yes' : 'no')."\n";
+              echo 'event_path_symlink='.(is_string($dir) && is_link($dir) ? 'yes' : 'no')."\n";
+              echo 'event_path_under_webroot='.($underWebroot ? 'yes' : 'no')."\n";
+              echo 'event_path_under_vk_project='.($absolute && str_starts_with($dir, $base.'/') ? 'yes' : 'no')."\n";
+              echo 'event_path_parent_exists='.($absolute && is_dir(dirname($dir)) ? 'yes' : 'no')."\n";
               echo 'event_directory_exists='.($ready ? 'yes' : 'no')."\n";
               echo 'event_directory_readable='.($ready && is_readable($root) ? 'yes' : 'no')."\n";
               echo 'event_directory_writable='.($ready && is_writable($root) ? 'yes' : 'no')."\n";
+              echo 'mcp_wrapper_exists='.(is_file($webroot.'/mcp.php') ? 'yes' : 'no')."\n";
+              echo 'mcp_wrapper_readable='.(is_readable($webroot.'/mcp.php') ? 'yes' : 'no')."\n";
               foreach ($files as $label => [$path, $needle]) {
                   $source = is_file($path) && is_readable($path) ? file_get_contents($path) : false;
                   echo $label.'='.(is_string($source) && str_contains($source, $needle) ? 'yes' : 'no')."\n";
