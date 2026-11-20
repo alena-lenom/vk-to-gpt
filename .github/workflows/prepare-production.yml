@@ -84,7 +84,8 @@ jobs:
           retention-days: 7
 
   deploy:
-    if: (inputs.publish || inputs.publish_callback) && github.actor == 'alena-lenom' && github.ref == 'refs/heads/feat/php-mcp-http'
+    # Analytics deploys stay on the MCP branch; callback deploys may run from either release branch.
+    if: github.actor == 'alena-lenom' && ((github.ref == 'refs/heads/feat/php-mcp-http' && (inputs.publish || inputs.publish_callback)) || (github.ref == 'refs/heads/feat/callback-api-receiver' && inputs.publish_callback))
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -113,7 +114,7 @@ jobs:
           printf '%s\n' 'Host *' '  BatchMode yes' '  IdentitiesOnly yes' '  StrictHostKeyChecking yes' '  ConnectTimeout 15' > "$HOME/.ssh/config"
           ssh-keygen -F "$PROD_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
       - name: Update code and verify HTTPS and MCP
-        if: inputs.publish
+        if: inputs.publish && github.ref == 'refs/heads/feat/php-mcp-http'
         run: |
           set -euo pipefail
           target="$PROD_USER@$PROD_HOST"
