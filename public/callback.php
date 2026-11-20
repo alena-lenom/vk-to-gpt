@@ -1,30 +1,32 @@
 <?php
 declare(strict_types=1);
 ini_set('display_errors', '0');
+header('Content-Type: text/plain; charset=utf-8');
+header('Cache-Control: no-store, private');
+header('X-Content-Type-Options: nosniff');
 
-// VK Callback API receiver for the configured community.
-// Persists wall_reply_new events in the normalized format read by
-// SapiEventReader (vk_sapi_wall_replies). All config comes from the
-// protected runtime configuration; never store secrets in this file.
-
-$confirmation = getenv('VK_CALLBACK_CONFIRMATION');
-$storageRoot  = getenv('SAPI_STORAGE_ROOT');
-if (is_string($storageRoot) && $storageRoot !== '') {
-    $rootPath = realpath($storageRoot);
-    $file = $rootPath !== false ? $rootPath . '/runtime/vk-callback-confirmation.txt' : '';
-    if ($file !== '' && is_file($file) && is_readable($file) && !is_link($file)) {
-        $fileConfirmation = trim((string) file_get_contents($file));
-        if ($fileConfirmation !== '') {
-            $confirmation = $fileConfirmation;
-        }
+// Use the same protected configuration as the deployed MCP and OAuth entrypoints.
+$configFile = '/var/www/u3641285/data/vk-to-gpt/shared/config.php';
+// The PHP built-in server is used only for isolated HTTP tests.
+if (PHP_SAPI === 'cli-server') {
+    $fixture = getenv('VK_TO_GPT_CALLBACK_TEST_CONFIG');
+    if (is_string($fixture) && $fixture !== '') {
+        $configFile = $fixture;
     }
 }
-$secret       = getenv('VK_CALLBACK_SECRET');
-$communityId  = getenv('VK_COMMUNITY_ID');
-$eventsDir    = getenv('VK_SAPI_EVENTS_DIR');
-
-header('Content-Type: text/plain; charset=utf-8');
-
+try {
+    $config = require $configFile;
+    if (!is_array($config)) {
+        throw new RuntimeException('Invalid callback configuration');
+    }
+} catch (Throwable) {
+    http_response_code(503);
+    exit('unavailable');
+}
+$confirmation = $config['VK_CALLBACK_CONFIRMATION'] ?? null;
+$secret       = $config['VK_CALLBACK_SECRET'] ?? null;
+$communityId  = $config['VK_COMMUNITY_ID'] ?? null;
+$eventsDir    = $config['VK_SAPI_EVENTS_DIR'] ?? null;
 $raw     = file_get_contents('php://input');
 $payload = is_string($raw) ? json_decode($raw, true) : null;
 if (!is_array($payload) || !isset($payload['type'], $payload['group_id'])
@@ -48,9 +50,13 @@ if ($payload['type'] === 'confirmation') {
     exit($confirmation); // exactly the confirmation string, nothing else
 }
 
-if (is_string($secret) && $secret !== ''
-    && (!isset($payload['secret']) || !hash_equals($secret, (string) $payload['secret']))) {
-    exit('ok'); // wrong secret: acknowledge, never persist
+if (!is_string($secret) || $secret === '') {
+    http_response_code(503);
+    exit('unavailable');
+}
+if (!is_string($payload['secret'] ?? null) || !hash_equals($secret, $payload['secret'])) {
+    http_response_code(403);
+    exit('forbidden');
 }
 
 if ($payload['type'] !== 'wall_reply_new' || !isset($payload['event_id'])) {
