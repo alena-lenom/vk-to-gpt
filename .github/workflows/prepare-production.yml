@@ -15,6 +15,14 @@ on:
         description: Publish the guarded Callback API receiver to the webroot
         type: boolean
         default: false
+      publish_callback_bridge:
+        description: Provision private event directory and update MCP wrapper with callback
+        type: boolean
+        default: false
+      enable_wall_reply_new:
+        description: Enable only wall_reply_new on the confirmed VK callback server after deployment
+        type: boolean
+        default: false
       inspect_runtime:
         description: Report credential variable presence from private configuration
         type: boolean
@@ -68,6 +76,9 @@ jobs:
           bash test/php/update_read_diagnostics.sh
           php -l deploy/probe-wall.php
           php -l public/callback.php
+          php -l deploy/mcp.php
+          php -l deploy/callback-bridge.php
+          php -l deploy/enable-wall-reply-callback.php
           python3 -B test/php/callback_confirmation.py
           bash -n deploy/update-webroot-file.sh
       - name: Package the bounded publish set
@@ -77,9 +88,11 @@ jobs:
           cp php/WallCollector.php stage/php/
           cp deploy/update-read-diagnostics.sh stage/
           cp public/callback.php stage/
+          cp deploy/mcp.php stage/mcp.php
+          cp deploy/callback-bridge.php stage/
           cp deploy/update-webroot-file.sh stage/
           printf '%s\n' "$GITHUB_SHA" > stage/REVISION
-          tar -C stage -czf artifact/diagnostics.tgz php/WallCollector.php REVISION update-read-diagnostics.sh callback.php update-webroot-file.sh
+          tar -C stage -czf artifact/diagnostics.tgz php/WallCollector.php REVISION update-read-diagnostics.sh callback.php mcp.php callback-bridge.php update-webroot-file.sh
           (cd artifact && sha256sum diagnostics.tgz > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
