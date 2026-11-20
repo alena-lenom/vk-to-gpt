@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the public VK Callback API contract with an isolated fake config.php."""
+"""Verify the VK Callback API against isolated fake configuration and event storage."""
 import json
 import os
 import pathlib
@@ -10,14 +10,17 @@ import urllib.error
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+
 with tempfile.TemporaryDirectory() as tmp:
     config_file = pathlib.Path(tmp) / "config.php"
+    events = pathlib.Path(tmp) / "events"
+    events.mkdir(mode=0o700)
     config_file.write_text(
         "<?php return ["
         "'VK_CALLBACK_CONFIRMATION'=>'file-token',"
         "'VK_CALLBACK_SECRET'=>'test-secret',"
         "'VK_COMMUNITY_ID'=>'220996873',"
-        "'VK_SAPI_EVENTS_DIR'=>'/nonexistent-callback-test-events'"
+        f"'VK_SAPI_EVENTS_DIR'=>'{events.as_posix()}'"
         "];"
     )
     env = dict(
@@ -52,11 +55,57 @@ with tempfile.TemporaryDirectory() as tmp:
                 time.sleep(0.1)
         else:
             raise AssertionError("PHP server did not start")
+
         assert post({"type": "confirmation", "group_id": 999}) == (403, "forbidden")
-        assert post({"type": "wall_reply_new", "group_id": 220996873}) == (403, "forbidden")
+        fake = {
+            "type": "wall_reply_new",
+            "group_id": 220996873,
+            "event_id": "synthetic-vk-event-1",
+            "secret": "test-secret",
+            "object": {
+                "id": 901,
+                "owner_id": -220996873,
+                "post_id": 23,
+                "from_id": 42,
+                "date": 1790000000,
+                "text": "Synthetic test comment",
+            },
+        }
+        assert post(dict(fake, secret="wrong")) == (403, "forbidden")
+        assert not list(events.iterdir())
+        assert post(fake) == (200, "ok")
+        assert post(fake) == (200, "ok")
+        files = list(events.glob("event-*.json"))
+        assert len(files) == 1, "Duplicate callback generated extra files"
+        record = json.loads(files[0].read_text())
+        assert record["source"] == {"type": "community", "group_id": 220996873}
+        assert record["interaction"]["post_owner_id"] == -220996873
+        assert record["interaction"]["comment_id"] == 901
+        assert record["interaction"]["post_id"] == 23
+
+        php_code = (
+            f"require {json.dumps(str(ROOT / 'php' / 'SapiEventReader.php'))};"
+            "$out=\\VkToGpt\\SapiEventReader::read(getenv('TEST_EVENTS_DIR'),"
+            "['group_id'=>220996873,'limit'=>5,'since'=>0]);"
+            "if (($out['status']??'')!=='AVAILABLE' ||"
+            "($out['observed_matching_events']??0)!==1 ||"
+            "($out['items'][0]['comment_id']??0)!==901) exit(2);"
+        )
+        read = subprocess.run(
+            ["php", "-r", php_code],
+            env=dict(os.environ, TEST_EVENTS_DIR=str(events)),
+            capture_output=True, text=True, check=False,
+        )
+        assert read.returncode == 0, read.stderr
+        assert post(dict(fake, event_id="synthetic-invalid", object=dict(fake["object"], owner_id=-999))) == (200, "ok")
+        assert len(list(events.glob("event-*.json"))) == 1
+        for file in events.iterdir():
+            file.unlink()
+        events.rmdir()
+        assert post(dict(fake, event_id="synthetic-no-storage")) == (503, "unavailable")
         config_file.unlink()
         assert post({"type": "confirmation", "group_id": 220996873}) == (503, "unavailable")
-        print("callback protected-config HTTP tests: PASS")
+        print("callback confirmation, event persistence and MCP reader tests: PASS")
     finally:
         proc.terminate()
         proc.wait(timeout=5)
