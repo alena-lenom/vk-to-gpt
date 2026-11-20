@@ -5,9 +5,20 @@ ini_set('display_errors', '0');
 // VK Callback API receiver for the configured community.
 // Persists wall_reply_new events in the normalized format read by
 // SapiEventReader (vk_sapi_wall_replies). All config comes from the
-// environment; never store secrets in this file.
+// protected runtime configuration; never store secrets in this file.
 
 $confirmation = getenv('VK_CALLBACK_CONFIRMATION');
+$storageRoot  = getenv('SAPI_STORAGE_ROOT');
+if (is_string($storageRoot) && $storageRoot !== '') {
+    $rootPath = realpath($storageRoot);
+    $file = $rootPath !== false ? $rootPath . '/runtime/vk-callback-confirmation.txt' : '';
+    if ($file !== '' && is_file($file) && is_readable($file) && !is_link($file)) {
+        $fileConfirmation = trim((string) file_get_contents($file));
+        if ($fileConfirmation !== '') {
+            $confirmation = $fileConfirmation;
+        }
+    }
+}
 $secret       = getenv('VK_CALLBACK_SECRET');
 $communityId  = getenv('VK_COMMUNITY_ID');
 $eventsDir    = getenv('VK_SAPI_EVENTS_DIR');
@@ -25,13 +36,14 @@ if (!is_array($payload) || !isset($payload['type'], $payload['group_id'])
 $configured = is_string($communityId) && preg_match('/^[1-9][0-9]*$/D', $communityId)
     ? (int) $communityId : null;
 if ($configured === null || $payload['group_id'] !== $configured) {
-    exit('ok'); // not our community: acknowledge, ignore
+    http_response_code($configured === null ? 503 : 403);
+    exit($configured === null ? 'unavailable' : 'forbidden');
 }
 
 if ($payload['type'] === 'confirmation') {
     if (!is_string($confirmation) || $confirmation === '') {
-        http_response_code(500);
-        exit('ok');
+        http_response_code(503);
+        exit('unavailable');
     }
     exit($confirmation); // exactly the confirmation string, nothing else
 }
