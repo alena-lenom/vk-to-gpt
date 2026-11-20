@@ -446,12 +446,12 @@ jobs:
               echo "vk_callback_api=community_token_unavailable\n";
               exit;
           }
-          $request = static function (string $method, array $params) use ($token): ?array {
+          $request = static function (string $method, array $params, ?string $credential = null) use ($token): ?array {
               $handle = curl_init('https://api.vk.ru/method/'.$method);
               if ($handle === false) return null;
               curl_setopt_array($handle, [
                   CURLOPT_POST => true,
-                  CURLOPT_POSTFIELDS => http_build_query($params + ['access_token' => $token, 'v' => '5.199']),
+                  CURLOPT_POSTFIELDS => http_build_query($params + ['access_token' => $credential ?? $token, 'v' => '5.199']),
                   CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded'],
                   CURLOPT_RETURNTRANSFER => true,
                   CURLOPT_TIMEOUT => 15,
@@ -497,6 +497,33 @@ jobs:
               $events = $settings['response']['events'] ?? null;
               $enabled = is_array($events) ? ($events['wall_reply_new'] ?? null) : null;
               echo 'vk_wall_reply_new_enabled='.($enabled === 1 || $enabled === true ? 'yes' : ($enabled === 0 || $enabled === false ? 'no' : 'unknown'))."\n";
+          }
+          $service = is_array($config) ? ($config['VK_SERVICE_KEY'] ?? null) : null;
+          if (!is_string($service) || $service === '') {
+              echo "sapi_app_metadata=service_credential_unavailable\n";
+          } else {
+              // Public app information only. 54771840 is the ID in the existing SAPI source.
+              $app = $request('apps.get', ['app_id' => 54771840], $service);
+              if ($app === null) {
+                  echo "sapi_app_metadata=transport_unavailable\n";
+              } elseif (isset($app['error'])) {
+                  $code = $app['error']['error_code'] ?? null;
+                  echo 'sapi_app_metadata_vk_error='.(is_int($code) ? $code : 'unknown')."\n";
+              } else {
+                  $items = $app['response']['items'] ?? null;
+                  $matching = is_array($items) ? array_values(array_filter($items,
+                      static fn ($item): bool => is_array($item) && ($item['id'] ?? null) === 54771840)) : [];
+                  if (count($matching) !== 1) {
+                      echo "sapi_app_metadata=not_listed\n";
+                  } else {
+                      $type = $matching[0]['type'] ?? null;
+                      $validTypes = ['app','game','site','standalone','vk_app','community_app','html5_game','mini_app'];
+                      echo 'sapi_app_public_type='.(is_string($type) && in_array($type, $validTypes, true) ? $type : 'unknown')."\n";
+                      $published = $matching[0]['published_date'] ?? null;
+                      echo 'sapi_app_published_date_utc='.(is_int($published) && $published > 0
+                          ? gmdate('Y-m-d', $published) : 'unknown')."\n";
+                  }
+              }
           }
           PHP
       - name: Remove temporary SSH files
