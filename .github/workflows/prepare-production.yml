@@ -93,7 +93,7 @@ jobs:
     env:
       PROD_HOST: ${{ secrets.PROD_HOST }}
       PROD_USER: ${{ secrets.PROD_USER }}
-      PROD_WEBROOT: ${{ vars.PROD_WEBROOT }}
+      PROD_PATH: ${{ vars.PROD_PATH }}
       BASELINE: 66726f80564dafe24adab25dd01bd113477231b5
     steps:
       - uses: actions/checkout@v4
@@ -161,7 +161,7 @@ jobs:
         run: |
           set -euo pipefail
           target="$PROD_USER@$PROD_HOST"
-          webroot=${PROD_WEBROOT:?PROD_WEBROOT variable is required}
+          webroot=${PROD_PATH:?PROD_PATH variable is required}
           [[ $webroot =~ ^/var/www/u[0-9]+/data/[^/]+$ ]]
           (cd artifact && sha256sum -c SHA256SUMS)
           stage2=$(ssh "$target" 'umask 077; mktemp -d /tmp/vk-to-gpt-callback.XXXXXXXX')
