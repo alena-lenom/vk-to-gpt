@@ -424,7 +424,7 @@ jobs:
                   $src = file_get_contents($path);
                   if (!is_string($src)) continue;
                   // Emit ONLY numerically validated public identifiers following a VK app/client label.
-                  $rx = '/(?:[\\\'"]?)(VK_[A-Z0-9_]*(?:APP|CLIENT)[A-Z0-9_]*|APP_ID|CLIENT_ID|app_id|client_id)(?:[\\\'"]?)[\\s]*(?:=>|=|:)[\\s]*[\\\'"]?([1-9][0-9]{4,11})(?:[\\\'"]?)/i';
+                  $rx = '/(VK_[A-Z0-9_]*(?:APP|CLIENT)[A-Z0-9_]*|APP_ID|CLIENT_ID|app_id|client_id)[^A-Za-z0-9]{1,12}([1-9][0-9]{4,11})/i';
                   if (preg_match_all($rx, $src, $found, PREG_SET_ORDER)) {
                       foreach ($found as $match) {
                           echo 'vk_public_id_source='.$label.':'.$match[1].':'.$match[2].PHP_EOL;
