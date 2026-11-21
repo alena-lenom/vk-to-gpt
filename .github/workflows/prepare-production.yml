@@ -397,6 +397,16 @@ jobs:
               $webroot = '/var/www/u3641285/data/www/vk.tattoomystery.ru';
               $config = require $base.'/shared/config.php';
               if (!is_array($config)) throw new RuntimeException('Invalid config');
+              // One-time public APP_ID check. Do not expose token, secret or arbitrary config values.
+              $candidateNames = [];
+              foreach ($config as $key => $value) {
+                  if (!is_string($key) || !preg_match('/^(?:VK_|VKTOGPT_|VK_TO_GPT_).*?(?:APP_?ID|CLIENT_?ID|APPLICATION_?ID)$/D', $key)) continue;
+                  $candidateNames[] = $key;
+                  if (!preg_match('/^(?:[1-9][0-9]{4,11})$/D', is_int($value) || is_string($value) ? (string)$value : '')) continue;
+                  echo 'vk_web_app_config_key='.$key."\\n";
+                  echo 'vk_web_app_id='.(string)$value."\\n";
+              }
+              if (!$candidateNames) echo "vk_web_app_keys=not_found\\n";
               $dir = $config['VK_SAPI_EVENTS_DIR'] ?? null;
               $bound = ($config['VK_COMMUNITY_ID'] ?? null) === '220996873';
               $absolute = is_string($dir) && str_starts_with($dir, '/');
