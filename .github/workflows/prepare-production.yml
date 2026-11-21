@@ -397,26 +397,40 @@ jobs:
               $webroot = '/var/www/u3641285/data/www/vk.tattoomystery.ru';
               $config = require $base.'/shared/config.php';
               if (!is_array($config)) throw new RuntimeException('Invalid config');
-              // Inspect candidate field names and strictly numeric public app IDs only.
-              $inspect = static function (array $values, string $parent = '', int $depth = 0) use (&$inspect): void {
-                  foreach ($values as $key => $value) {
-                      if (!is_string($key)) continue;
-                      $path = $parent === '' ? $key : $parent.'.'.$key;
-                      if (preg_match('/(?:app|client|application)/i', $key) === 1) {
-                          $safePath = preg_replace('/[^A-Za-z0-9_.-]/', '_', substr($path, 0, 140));
-                          echo 'vk_app_candidate_field='.$safePath.PHP_EOL;
-                          if (is_int($value) || is_string($value)) {
-                              $number = (string)$value;
-                              if (preg_match('/^[1-9][0-9]{4,11}$/D', $number)
-                                  && preg_match('/(?:app|application|client)/i', $path)) {
-                                  echo 'vk_app_numeric_candidate='.$number.PHP_EOL;
-                              }
-                          }
-                      }
-                      if ($depth < 2 && is_array($value)) $inspect($value, $path, $depth + 1);
+              // App IDs may be in additional files or constants, not returned config keys.
+              $safeNames = ['VK_APP_ID','VK_CLIENT_ID','VK_APPLICATION_ID','VK_ID_APP_ID','VK_APPID','VK_API_APP_ID','APP_ID','CLIENT_ID'];
+              foreach ($safeNames as $name) {
+                  if (!defined($name)) continue;
+                  $value = constant($name);
+                  if ((is_int($value) || is_string($value)) && preg_match('/^[1-9][0-9]{4,11}$/D', (string)$value)) {
+                      echo 'vk_web_app_constant='.$name.':'.(string)$value.PHP_EOL;
                   }
-              };
-              $inspect($config);
+              }
+              foreach (array_keys($config) as $name) {
+                  if (is_string($name) && preg_match('/^VK_[A-Z0-9_]+$/D', $name) && preg_match('/(?:ID|APP|CLIENT)/', $name)) {
+                      echo 'vk_top_level_id_key='.$name.PHP_EOL;
+                  }
+              }
+              foreach ([
+                  'shared/config.php' => $base.'/shared/config.php',
+                  'shared/vk.php' => $base.'/shared/vk.php',
+                  'shared/vk-config.php' => $base.'/shared/vk-config.php',
+                  'config.php' => $base.'/config.php',
+                  'config/vk.php' => $base.'/config/vk.php',
+                  'app/config.php' => $base.'/app/config.php',
+              ] as $label => $path) {
+                  if (!is_file($path) || !is_readable($path) || is_link($path)) continue;
+                  echo 'vk_config_file_present='.$label.PHP_EOL;
+                  $src = file_get_contents($path);
+                  if (!is_string($src)) continue;
+                  // Emit ONLY numerically validated public identifiers following a VK app/client label.
+                  $rx = '/(?:[\\\'"]?)(VK_[A-Z0-9_]*(?:APP|CLIENT)[A-Z0-9_]*|APP_ID|CLIENT_ID|app_id|client_id)(?:[\\\'"]?)[\\s]*(?:=>|=|:)[\\s]*[\\\'"]?([1-9][0-9]{4,11})(?:[\\\'"]?)/i';
+                  if (preg_match_all($rx, $src, $found, PREG_SET_ORDER)) {
+                      foreach ($found as $match) {
+                          echo 'vk_public_id_source='.$label.':'.$match[1].':'.$match[2].PHP_EOL;
+                      }
+                  }
+              }
               $dir = $config['VK_SAPI_EVENTS_DIR'] ?? null;
               $bound = ($config['VK_COMMUNITY_ID'] ?? null) === '220996873';
               $absolute = is_string($dir) && str_starts_with($dir, '/');
