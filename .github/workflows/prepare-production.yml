@@ -403,10 +403,10 @@ jobs:
                   if (!is_string($key) || !preg_match('/^(?:VK_|VKTOGPT_|VK_TO_GPT_).*?(?:APP_?ID|CLIENT_?ID|APPLICATION_?ID)$/D', $key)) continue;
                   $candidateNames[] = $key;
                   if (!preg_match('/^(?:[1-9][0-9]{4,11})$/D', is_int($value) || is_string($value) ? (string)$value : '')) continue;
-                  echo 'vk_web_app_config_key='.$key."\\n";
-                  echo 'vk_web_app_id='.(string)$value."\\n";
+                  echo 'vk_web_app_config_key='.$key.PHP_EOL;
+                  echo 'vk_web_app_id='.(string)$value.PHP_EOL;
               }
-              if (!$candidateNames) echo "vk_web_app_keys=not_found\\n";
+              if (!$candidateNames) echo 'vk_web_app_keys=not_found'.PHP_EOL;
               $dir = $config['VK_SAPI_EVENTS_DIR'] ?? null;
               $bound = ($config['VK_COMMUNITY_ID'] ?? null) === '220996873';
               $absolute = is_string($dir) && str_starts_with($dir, '/');
