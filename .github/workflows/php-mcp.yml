@@ -42,4 +42,6 @@ jobs:
       - run: composer test
       - run: node test/php/contract.mjs
       - run: python3 -B test/php/smoke_http.py
+      - run: php -l public/callback.php
+      - run: python3 -B test/php/callback_confirmation.py
       - run: bash test/php/update_read_diagnostics.sh
