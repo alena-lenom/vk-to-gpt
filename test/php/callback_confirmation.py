@@ -82,6 +82,11 @@ with tempfile.TemporaryDirectory() as tmp:
         assert record["interaction"]["post_owner_id"] == -220996873
         assert record["interaction"]["comment_id"] == 901
         assert record["interaction"]["post_id"] == 23
+        # A repeated event_id may have altered data; the first receipt must win.
+        replay = dict(fake, object=dict(fake["object"], text="Changed replay payload"))
+        assert post(replay) == (200, "ok")
+        assert len(list(events.glob("event-*.json"))) == 1
+        assert json.loads(files[0].read_text()) == record, "Replay overwrote original event"
 
         php_code = (
             f"require {json.dumps(str(ROOT / 'php' / 'SapiEventReader.php'))};"

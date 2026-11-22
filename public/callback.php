@@ -106,7 +106,25 @@ try {
     http_response_code(400);
     exit('bad request');
 }
-if (strlen($record) > 16384 || file_put_contents($root . '/' . $name, $record, LOCK_EX) === false) {
+if (strlen($record) > 16384) {
+    http_response_code(503);
+    exit('unavailable');
+}
+
+// Write outside the reader's *.json glob, then publish with a no-clobber
+// hard link. A VK retry must not overwrite the original receipt or contents.
+$target = $root . '/' . $name;
+$temporary = @tempnam($root, 'callback-');
+if (!is_string($temporary) || dirname($temporary) !== $root) {
+    if (is_string($temporary)) @unlink($temporary);
+    http_response_code(503);
+    exit('unavailable');
+}
+$written = @file_put_contents($temporary, $record, LOCK_EX);
+$published = $written === strlen($record) && @link($temporary, $target);
+$alreadyStored = !$published && is_file($target) && !is_link($target);
+@unlink($temporary);
+if (!$published && !$alreadyStored) {
     http_response_code(503);
     exit('unavailable');
 }
