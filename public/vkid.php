@@ -10,14 +10,14 @@ header('X-Content-Type-Options: nosniff');
 require dirname(__DIR__).'/php/VkIdTokenStore.php';
 
 /**
- * Minimal VK ID OAuth user flow:
- *   /vkid?action=start    -> redirect to id.vk.ru (PKCE + state)
- *   /vkid?action=callback -> exchange code, store token pair, show result
+ * Minimal VK ID OAuth user flow (no SDK, backend code exchange):
+ *   /vkid?action=start    -> redirect to https://id.vk.ru/authorize (PKCE + state)
+ *   /vkid?action=callback -> exchange code for tokens, store pair, show result
  *
- * Client credentials come from the environment (see .env.example):
- *   VK_ID_CLIENT_ID     - "Защищённый ключ" of the VK ID app
- *   VK_ID_CLIENT_SECRET - "Сервисный ключ доступа" of the VK ID app
- *   VK_ID_SCOPE         - requested scope (default: vkid)
+ * Environment (see .env.example):
+ *   VK_ID_CLIENT_ID     - numeric "ID приложения" from the VK ID console
+ *   VK_ID_SERVICE_TOKEN - "Сервисный ключ доступа" of the app (confidential exchange)
+ *   VK_ID_SCOPE         - requested scope (default: vkid.personal_info)
  */
 
 function envOrFail(string $name): string
@@ -40,7 +40,7 @@ function store(): VkIdTokenStore
     return new VkIdTokenStore(
         envOrFail('MCP_OAUTH_DB'),
         getenv('VK_ID_CLIENT_ID') ?: null,
-        getenv('VK_ID_CLIENT_SECRET') ?: null,
+        getenv('VK_ID_SERVICE_TOKEN') ?: null,
     );
 }
 
@@ -67,7 +67,7 @@ $action = (string)($_GET['action'] ?? 'start');
 if ($action === 'start') {
     $clientId = envOrFail('VK_ID_CLIENT_ID');
     if (!store()->hasCredentials()) {
-        page('VK ID', '<h2>VK ID не настроен</h2><p>Заполните VK_ID_CLIENT_ID и VK_ID_CLIENT_SECRET в конфиге сервера.</p>');
+        page('VK ID', '<h2>VK ID не настроен</h2><p>Заполните VK_ID_CLIENT_ID в конфиге сервера.</p>');
     }
     $verifier = rtrim(strtr(base64_encode(random_bytes(48)), '+/', '-_'), '=');
     $state = rtrim(strtr(base64_encode(random_bytes(24)), '+/', '-_'), '=');
@@ -84,15 +84,16 @@ if ($action === 'start') {
         'state' => $state,
         'code_challenge' => $challenge,
         'code_challenge_method' => 'S256',
-        'scope' => getenv('VK_ID_SCOPE') ?: 'vkid',
+        'scope' => getenv('VK_ID_SCOPE') ?: 'vkid.personal_info',
     ], '', '&', PHP_QUERY_RFC3986);
-    header('Location: https://id.vk.ru/oauth2/auth?'.$query, true, 302);
+    header('Location: https://id.vk.ru/authorize?'.$query, true, 302);
     exit;
 }
 
 if ($action === 'callback') {
     $code = (string)($_GET['code'] ?? '');
     $state = (string)($_GET['state'] ?? '');
+    $deviceId = (string)($_GET['device_id'] ?? '');
     $sessionFile = sessionDir().'/vkid_'.hash('sha256', $state);
     $session = is_file($sessionFile) ? json_decode((string)file_get_contents($sessionFile), true) : null;
     @unlink($sessionFile);
@@ -102,13 +103,18 @@ if ($action === 'callback') {
     $result = store()->exchange([
         'grant_type' => 'authorization_code',
         'code' => $code,
-        'redirect_uri' => baseUrl().'/vkid?action=callback',
         'code_verifier' => (string)$session['verifier'],
+        'device_id' => $deviceId,
     ]);
     if ($result === null) {
-        page('VK ID', '<h2>Ошибка обмена кода</h2><p>VK ID не выдал токен. Проверьте сервисный ключ и права доступа к API в настройках приложения, затем повторите.</p>');
+        page('VK ID', '<h2>Ошибка обмена кода</h2><p>VK ID не выдал токен. Проверьте сервисный ключ, статус приложения (конфиденциальное) и права доступа к API, затем повторите.</p>');
     }
-    store()->saveToken((string)$result['access_token'], (string)$result['refresh_token'], (int)$result['expires_in']);
+    store()->saveToken(
+        (string)$result['access_token'],
+        (string)$result['refresh_token'],
+        (int)$result['expires_in'],
+        (string)$result['device_id'],
+    );
     page('VK ID', '<h2>Готово</h2><p>Пользовательский токен получен и сохранён. Статистика, wall.getById и wall.edit теперь доступны через эндпоинт.</p>');
 }
 
