@@ -110,6 +110,7 @@ if ($action === 'callback') {
         'code_verifier' => (string)$session['verifier'],
         'device_id' => $deviceId,
         'redirect_uri' => baseUrl().'/vkid',
+        'state' => $state,
     ]);
     if ($result === null) {
         // Server-side diagnostics: exact VK error goes to a log next to OAuth sessions.
