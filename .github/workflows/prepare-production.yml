@@ -304,7 +304,7 @@ jobs:
         run: rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
 
   inspect-runtime:
-    if: (inputs.inspect_runtime || inputs.read_probe) && github.actor == 'alena-lenom' && github.ref == 'refs/heads/feat/php-mcp-http'
+    if: (inputs.inspect_runtime || inputs.read_probe) && github.actor == 'alena-lenom' && (github.ref == 'refs/heads/feat/php-mcp-http' || github.ref == 'refs/heads/feat/vk-id-user-token')
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -332,9 +332,37 @@ jobs:
           ssh "$PROD_USER@$PROD_HOST" /opt/php/8.4/bin/php <<'PHP'
           <?php
           $config = require '/var/www/u3641285/data/vk-to-gpt/shared/config.php';
-          foreach (['VK_USER_TOKEN', 'VK_SERVICE_KEY', 'VK_COMMUNITY_TOKEN'] as $name) {
+          foreach (['VK_USER_TOKEN', 'VK_SERVICE_KEY', 'VK_COMMUNITY_TOKEN', 'VK_ID_CLIENT_ID', 'VK_ID_SERVICE_TOKEN'] as $name) {
               $configured = is_array($config) && isset($config[$name]) && is_string($config[$name]) && $config[$name] !== '';
               echo $name.'='.($configured ? 'present' : 'missing')."\n";
+          }
+          PHP
+      - name: Read VK ID error fields without credentials
+        if: inputs.inspect_runtime && github.ref == 'refs/heads/feat/vk-id-user-token'
+        run: |
+          ssh "$PROD_USER@$PROD_HOST" /opt/php/8.4/bin/php <<'PHP'
+          <?php
+          $config = require '/var/www/u3641285/data/vk-to-gpt/shared/config.php';
+          $dir = is_array($config) ? ($config['MCP_OAUTH_SESSION_DIR'] ?? '') : '';
+          $path = is_string($dir) && $dir !== '' ? rtrim($dir, '/').'/vkid_last_error.log' : '';
+          if ($path === '' || !is_file($path) || !is_readable($path)) {
+              echo "VK_ID_LOG=missing\n";
+              exit;
+          }
+          $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+          $line = is_array($lines) ? end($lines) : false;
+          $jsonAt = is_string($line) ? strpos($line, '{') : false;
+          $entry = $jsonAt === false ? null : json_decode(substr($line, $jsonAt), true);
+          if (!is_array($entry)) {
+              echo "VK_ID_LOG=unreadable_entry\n";
+              exit;
+          }
+          foreach (['error', 'error_description', 'error_hint', 'transport', 'http_code'] as $key) {
+              if (!isset($entry[$key]) || !is_scalar($entry[$key])) continue;
+              $value = substr((string)$entry[$key], 0, 400);
+              $value = preg_replace('/\\b(service_token|access_token|refresh_token|client_secret|code_verifier|code)\\b\\s*[:=]\\s*\\S+/i', '$1=[redacted]', $value);
+              $value = preg_replace('/vk2\\.[A-Za-z0-9._-]+/', '[redacted-token]', $value);
+              echo $key.'='.$value."\n";
           }
           PHP
       - name: Probe deployed MCP read-only wall collection
