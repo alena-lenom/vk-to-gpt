@@ -19,6 +19,10 @@ on:
         description: Invoke read-only MCP wall collector from server without disclosing credentials
         type: boolean
         default: false
+      deploy_app:
+        description: Deploy application code (php/, public/) from this exact revision to production
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -145,6 +149,115 @@ jobs:
           PHP
           ssh "$target" VK_PROBE_METRICS=1 /opt/php/8.4/bin/php < deploy/probe-wall.php
           printf '%s\n' 'Guarded post metrics update published. Exact revision, HTTPS, MCP, OAuth and live post_metric_summary verified.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove temporary SSH files
+        if: always()
+        run: rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
+
+  deploy-app:
+    if: inputs.deploy_app && github.actor == 'alena-lenom'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      PROD_HOST: ${{ secrets.PROD_HOST }}
+      PROD_USER: ${{ secrets.PROD_USER }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package application code
+        run: |
+          set -eu
+          mkdir -p stage artifact
+          cp -r php public stage/
+          printf '%s\n' "$GITHUB_SHA" > stage/REVISION
+          tar -C stage -czf artifact/app.tgz php public REVISION
+          (cd artifact && sha256sum app.tgz > SHA256SUMS)
+      - name: Configure trusted SSH
+        env:
+          SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PROD_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          printf '%s\n' 'Host *' '  BatchMode yes' '  IdentitiesOnly yes' '  StrictHostKeyChecking yes' '  ConnectTimeout 15' > "$HOME/.ssh/config"
+          ssh-keygen -F "$PROD_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
+      - name: Deploy application revision with backup and rollback
+        run: |
+          set -euo pipefail
+          target="$PROD_USER@$PROD_HOST"
+          app=/var/www/u3641285/data/vk-to-gpt/app
+          (cd artifact && sha256sum -c SHA256SUMS)
+          stage=$(ssh "$target" 'umask 077; mktemp -d /tmp/vk-to-gpt-app.XXXXXXXX')
+          [[ $stage =~ ^/tmp/vk-to-gpt-app\.[a-zA-Z0-9]{8}$ ]]
+          applied=false
+          cleanup() {
+            status=$?
+            if (( status )) && [[ $applied == true ]]; then
+              if ! ssh "$target" bash -s -- "$app" "$stage" <<'EOS'
+          set -euo pipefail
+          app="$1"; stage="$2"
+          rm -rf "$app/php" "$app/public" "$app/REVISION"
+          tar -xzf "$stage/backup.tgz" -C "$app"
+          EOS
+              then
+                echo "Rollback failed. Retained backup at $stage/backup.tgz" >&2
+                return "$status"
+              fi
+            elif (( status )); then
+              echo "Deployment failed. Inspect backup at $stage/backup.tgz if present" >&2
+              return "$status"
+            fi
+            ssh "$target" rm -rf -- "$stage"
+            return "$status"
+          }
+          trap cleanup EXIT
+          scp -q artifact/app.tgz "$target:$stage/"
+          scp -q artifact/SHA256SUMS "$target:$stage/"
+          ssh "$target" bash -s -- "$app" "$stage" "$GITHUB_SHA" <<'EOS'
+          set -euo pipefail
+          app="$1"; stage="$2"; expected="$3"
+          cd "$stage"
+          sha256sum -c SHA256SUMS
+          mkdir -p unpack
+          tar -xzf app.tgz -C unpack
+          [[ $(cat unpack/REVISION) == "$expected" ]]
+          find unpack/php unpack/public -type f -name '*.php' -print0 | while IFS= read -r -d '' file; do
+            /opt/php/8.4/bin/php -l "$file" >/dev/null
+          done
+          [[ -d "$app/php" && -d "$app/public" ]]
+          backup_paths=(php public)
+          [[ ! -f "$app/REVISION" ]] || backup_paths+=(REVISION)
+          tar -C "$app" -czf "$stage/backup.tgz" "${backup_paths[@]}"
+          rollback_on_error() {
+            status=$?
+            if (( status )); then
+              rm -rf "$app/php" "$app/public" "$app/REVISION"
+              tar -xzf "$stage/backup.tgz" -C "$app"
+            fi
+            exit "$status"
+          }
+          trap rollback_on_error EXIT
+          rm -rf "$app/php" "$app/public"
+          cp -r unpack/php unpack/public "$app/"
+          cp unpack/REVISION "$app/REVISION"
+          [[ $(cat "$app/REVISION") == "$expected" ]]
+          trap - EXIT
+          EOS
+          applied=true
+          [[ $(ssh "$target" cat "$app/REVISION") == "$GITHUB_SHA" ]]
+      - name: Verify deployed endpoints respond
+        run: |
+          set -euo pipefail
+          curl -fsS -o /dev/null https://vk.tattoomystery.ru/
+          code=$(curl -s -o /dev/null -w '%{http_code}' 'https://vk.tattoomystery.ru/vkid?action=start' || true)
+          if [[ "$code" != "302" && "$code" != "200" && "$code" != "503" ]]; then
+            echo "Unexpected /vkid status: $code" >&2
+            exit 1
+          fi
+          echo "Homepage alive; /vkid answers with HTTP $code (503 = VK ID config keys not added yet)"
       - name: Remove temporary SSH files
         if: always()
         run: rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
