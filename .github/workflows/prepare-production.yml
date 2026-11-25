@@ -164,13 +164,14 @@ jobs:
       PROD_USER: ${{ secrets.PROD_USER }}
     steps:
       - uses: actions/checkout@v4
-      - name: Package application code
+      - name: Package application and managed entrypoints
         run: |
           set -eu
           mkdir -p stage artifact
           cp -r php public stage/
+          cp deploy/mcp.php deploy/vkid.php stage/
           printf '%s\n' "$GITHUB_SHA" > stage/REVISION
-          tar -C stage -czf artifact/app.tgz php public REVISION
+          tar -C stage -czf artifact/app.tgz php public REVISION mcp.php vkid.php
           (cd artifact && sha256sum app.tgz > SHA256SUMS)
       - name: Configure trusted SSH
         env:
@@ -184,26 +185,34 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           printf '%s\n' 'Host *' '  BatchMode yes' '  IdentitiesOnly yes' '  StrictHostKeyChecking yes' '  ConnectTimeout 15' > "$HOME/.ssh/config"
           ssh-keygen -F "$PROD_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
-      - name: Deploy application revision with backup and rollback
+      - name: Deploy app and enable the VK ID route with rollback
         run: |
           set -euo pipefail
           target="$PROD_USER@$PROD_HOST"
           app=/var/www/u3641285/data/vk-to-gpt/app
+          webroot=/var/www/u3641285/data/www/vk.tattoomystery.ru
           (cd artifact && sha256sum -c SHA256SUMS)
           stage=$(ssh "$target" 'umask 077; mktemp -d /tmp/vk-to-gpt-app.XXXXXXXX')
           [[ $stage =~ ^/tmp/vk-to-gpt-app.[a-zA-Z0-9]{8}$ ]]
           cleanup() {
             status=$?
             if (( status )); then
-              if ssh "$target" test -f "$stage/backup.tgz"; then
-                if ! ssh "$target" bash -s -- "$app" "$stage" <<'EOS'
+              if ssh "$target" test -f "$stage/backup.complete"; then
+                if ! ssh "$target" bash -s -- "$app" "$webroot" "$stage" <<'EOS'
           set -euo pipefail
-          app="$1"; stage="$2"
+          app="$1"; webroot="$2"; stage="$3"
           rm -rf "$app/php" "$app/public" "$app/REVISION"
-          tar -xzf "$stage/backup.tgz" -C "$app"
+          tar -xzf "$stage/backup-app.tgz" -C "$app"
+          cp -p "$stage/backup.mcp.php" "$webroot/mcp.php"
+          cp -p "$stage/backup.htaccess" "$webroot/.htaccess"
+          if [[ -f "$stage/backup.vkid.php" ]]; then
+            cp -p "$stage/backup.vkid.php" "$webroot/vkid.php"
+          else
+            rm -f "$webroot/vkid.php"
+          fi
           EOS
                 then
-                  echo "Rollback failed. Retained backup at $stage/backup.tgz" >&2
+                  echo "Rollback failed. Retained backup at $stage" >&2
                   return "$status"
                 fi
               else
@@ -218,9 +227,11 @@ jobs:
           trap cleanup EXIT
           scp -q artifact/app.tgz "$target:$stage/"
           scp -q artifact/SHA256SUMS "$target:$stage/"
-          ssh "$target" bash -s -- "$app" "$stage" "$GITHUB_SHA" <<'EOS'
+          ssh "$target" bash -s -- "$app" "$webroot" "$stage" "$GITHUB_SHA" <<'EOS'
           set -euo pipefail
-          app="$1"; stage="$2"; expected="$3"
+          app="$1"; webroot="$2"; stage="$3"; expected="$4"
+          [[ -d "$app/php" && -d "$app/public" ]]
+          [[ -d "$webroot" && -f "$webroot/.htaccess" && -f "$webroot/mcp.php" ]]
           cd "$stage"
           sha256sum -c SHA256SUMS
           mkdir -p unpack
@@ -229,16 +240,30 @@ jobs:
           find unpack/php unpack/public -type f -name '*.php' -print0 | while IFS= read -r -d '' file; do
             /opt/php/8.4/bin/php -l "$file" >/dev/null
           done
-          [[ -d "$app/php" && -d "$app/public" ]]
+          /opt/php/8.4/bin/php -l unpack/mcp.php >/dev/null
+          /opt/php/8.4/bin/php -l unpack/vkid.php >/dev/null
           backup_paths=(php public)
           [[ ! -f "$app/REVISION" ]] || backup_paths+=(REVISION)
-          tar -C "$app" -czf "$stage/backup.tmp.tgz" "${backup_paths[@]}"
-          mv "$stage/backup.tmp.tgz" "$stage/backup.tgz"
+          tar -C "$app" -czf "$stage/backup-app.tmp.tgz" "${backup_paths[@]}"
+          mv "$stage/backup-app.tmp.tgz" "$stage/backup-app.tgz"
+          cp -p "$webroot/.htaccess" "$stage/backup.htaccess"
+          cp -p "$webroot/mcp.php" "$stage/backup.mcp.php"
+          if [[ -f "$webroot/vkid.php" ]]; then
+            cp -p "$webroot/vkid.php" "$stage/backup.vkid.php"
+          fi
+          touch "$stage/backup.complete"
           rollback_on_error() {
             status=$?
             if (( status )); then
               rm -rf "$app/php" "$app/public" "$app/REVISION"
-              tar -xzf "$stage/backup.tgz" -C "$app"
+              tar -xzf "$stage/backup-app.tgz" -C "$app"
+              cp -p "$stage/backup.mcp.php" "$webroot/mcp.php"
+              cp -p "$stage/backup.htaccess" "$webroot/.htaccess"
+              if [[ -f "$stage/backup.vkid.php" ]]; then
+                cp -p "$stage/backup.vkid.php" "$webroot/vkid.php"
+              else
+                rm -f "$webroot/vkid.php"
+              fi
             fi
             exit "$status"
           }
@@ -246,7 +271,24 @@ jobs:
           rm -rf "$app/php" "$app/public"
           cp -r unpack/php unpack/public "$app/"
           cp unpack/REVISION "$app/REVISION"
+          cp -p unpack/mcp.php "$webroot/mcp.php"
+          cp -p unpack/vkid.php "$webroot/vkid.php"
+          if ! grep -Fq 'RewriteRule ^vkid/?$ vkid.php [L]' "$webroot/.htaccess"; then
+            awk '
+              /^# END VK TO GPT MCP$/ && !inserted {
+                print "RewriteRule ^vkid/?$ vkid.php [L]"
+                inserted=1
+              }
+              { print }
+              END {
+                if (!inserted) print "RewriteRule ^vkid/?$ vkid.php [L]"
+              }
+            ' "$webroot/.htaccess" > "$stage/htaccess.new"
+            chmod --reference="$webroot/.htaccess" "$stage/htaccess.new"
+            mv "$stage/htaccess.new" "$webroot/.htaccess"
+          fi
           [[ $(cat "$app/REVISION") == "$expected" ]]
+          grep -Fq 'RewriteRule ^vkid/?$ vkid.php [L]' "$webroot/.htaccess"
           trap - EXIT
           EOS
           [[ $(ssh "$target" cat "$app/REVISION") == "$GITHUB_SHA" ]]
