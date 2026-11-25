@@ -191,23 +191,25 @@ jobs:
           app=/var/www/u3641285/data/vk-to-gpt/app
           (cd artifact && sha256sum -c SHA256SUMS)
           stage=$(ssh "$target" 'umask 077; mktemp -d /tmp/vk-to-gpt-app.XXXXXXXX')
-          [[ $stage =~ ^/tmp/vk-to-gpt-app\.[a-zA-Z0-9]{8}$ ]]
-          applied=false
+          [[ $stage =~ ^/tmp/vk-to-gpt-app.[a-zA-Z0-9]{8}$ ]]
           cleanup() {
             status=$?
-            if (( status )) && [[ $applied == true ]]; then
-              if ! ssh "$target" bash -s -- "$app" "$stage" <<'EOS'
+            if (( status )); then
+              if ssh "$target" test -f "$stage/backup.tgz"; then
+                if ! ssh "$target" bash -s -- "$app" "$stage" <<'EOS'
           set -euo pipefail
           app="$1"; stage="$2"
           rm -rf "$app/php" "$app/public" "$app/REVISION"
           tar -xzf "$stage/backup.tgz" -C "$app"
           EOS
-              then
-                echo "Rollback failed. Retained backup at $stage/backup.tgz" >&2
-                return "$status"
+                then
+                  echo "Rollback failed. Retained backup at $stage/backup.tgz" >&2
+                  return "$status"
+                fi
+              else
+                echo "Deployment failed before a complete backup was created" >&2
               fi
-            elif (( status )); then
-              echo "Deployment failed. Inspect backup at $stage/backup.tgz if present" >&2
+              ssh "$target" rm -rf -- "$stage" || true
               return "$status"
             fi
             ssh "$target" rm -rf -- "$stage"
@@ -230,7 +232,8 @@ jobs:
           [[ -d "$app/php" && -d "$app/public" ]]
           backup_paths=(php public)
           [[ ! -f "$app/REVISION" ]] || backup_paths+=(REVISION)
-          tar -C "$app" -czf "$stage/backup.tgz" "${backup_paths[@]}"
+          tar -C "$app" -czf "$stage/backup.tmp.tgz" "${backup_paths[@]}"
+          mv "$stage/backup.tmp.tgz" "$stage/backup.tgz"
           rollback_on_error() {
             status=$?
             if (( status )); then
@@ -246,11 +249,7 @@ jobs:
           [[ $(cat "$app/REVISION") == "$expected" ]]
           trap - EXIT
           EOS
-          applied=true
           [[ $(ssh "$target" cat "$app/REVISION") == "$GITHUB_SHA" ]]
-      - name: Verify deployed endpoints respond
-        run: |
-          set -euo pipefail
           curl -fsS -o /dev/null https://vk.tattoomystery.ru/
           code=$(curl -s -o /dev/null -w '%{http_code}' 'https://vk.tattoomystery.ru/vkid?action=start' || true)
           if [[ "$code" != "302" && "$code" != "200" && "$code" != "503" ]]; then
