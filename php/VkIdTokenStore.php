@@ -5,44 +5,50 @@ namespace VkToGpt;
 
 /**
  * Stores the VK ID user token pair in the existing MCP OAuth sqlite database
- * and transparently refreshes the short-lived access token.
+ * and transparently refreshes the short-lived (1 hour) access token.
+ *
+ * VK ID scheme (no SDK, backend exchange):
+ *   authorize: GET  https://id.vk.ru/authorize?response_type=code&...
+ *   exchange:  POST https://id.vk.ru/oauth2/auth (grant_type=authorization_code,
+ *              code, code_verifier, device_id, service_token for confidential apps)
  *
  * Secrets never leave this class: callers receive only the current access token.
  */
 final class VkIdTokenStore
 {
     private const TABLE = 'vkid_tokens';
-    private const TOKEN_URL = 'https://api.vk.com/oauth/token';
+    private const TOKEN_URL = 'https://id.vk.ru/oauth2/auth';
 
     public function __construct(
         private readonly string $dbPath,
         private readonly ?string $clientId,
-        private readonly ?string $clientSecret,
+        private readonly ?string $serviceToken,
     ) {}
 
     public function hasCredentials(): bool
     {
-        return $this->clientId !== null && $this->clientId !== ''
-            && $this->clientSecret !== null && $this->clientSecret !== '';
+        return $this->clientId !== null && $this->clientId !== '';
     }
 
-    public function saveToken(string $accessToken, string $refreshToken, int $expiresIn): void
+    public function saveToken(string $accessToken, string $refreshToken, int $expiresIn, string $deviceId = ''): void
     {
         if ($accessToken === '' || str_contains($accessToken, "\0")) {
             throw new \InvalidArgumentException('Invalid access token');
         }
         $stmt = $this->pdo()->prepare(
-            'INSERT INTO '.self::TABLE.' (id, access_token, refresh_token, expires_at, updated_at)
-             VALUES (1, :access, :refresh, :expires, :updated)
+            'INSERT INTO '.self::TABLE.' (id, access_token, refresh_token, device_id, expires_at, updated_at)
+             VALUES (1, :access, :refresh, :device, :expires, :updated)
              ON CONFLICT(id) DO UPDATE SET
                access_token = excluded.access_token,
                refresh_token = excluded.refresh_token,
+               device_id = excluded.device_id,
                expires_at = excluded.expires_at,
                updated_at = excluded.updated_at'
         );
         $stmt->execute([
             ':access' => $accessToken,
             ':refresh' => $refreshToken,
+            ':device' => $deviceId,
             ':expires' => time() + max(60, $expiresIn),
             ':updated' => time(),
         ]);
@@ -61,9 +67,18 @@ final class VkIdTokenStore
         if (time() < $expiresAt - 120 && $access !== '') return $access;
         $refresh = (string)$row['refresh_token'];
         if ($refresh === '') return $access !== '' && time() < $expiresAt + 300 ? $access : null;
-        $new = $this->exchange(['grant_type' => 'refresh_token', 'refresh_token' => $refresh]);
+        $new = $this->exchange([
+            'grant_type' => 'refresh_token',
+            'refresh_token' => $refresh,
+            'device_id' => (string)$row['device_id'],
+        ]);
         if ($new === null) return null;
-        $this->saveToken((string)$new['access_token'], (string)$new['refresh_token'], (int)$new['expires_in']);
+        $this->saveToken(
+            (string)$new['access_token'],
+            (string)$new['refresh_token'],
+            (int)$new['expires_in'],
+            (string)$new['device_id'],
+        );
         return (string)$new['access_token'];
     }
 
@@ -74,25 +89,30 @@ final class VkIdTokenStore
 
     private function currentRow(): ?array
     {
-        $stmt = $this->pdo()->query('SELECT access_token, refresh_token, expires_at FROM '.self::TABLE.' WHERE id = 1');
+        $stmt = $this->pdo()->query('SELECT access_token, refresh_token, device_id, expires_at FROM '.self::TABLE.' WHERE id = 1');
         $row = $stmt === false ? false : $stmt->fetch(\PDO::FETCH_ASSOC);
         return is_array($row) ? $row : null;
     }
 
-    /** Exchanges an authorization code or refresh token for a token pair. */
+    /**
+     * Exchanges an authorization code or refresh token for a token pair.
+     * $params must include grant_type and the grant-specific fields.
+     */
     public function exchange(array $params): ?array
     {
         if (!$this->hasCredentials()) return null;
-        $payload = array_merge([
-            'client_id' => $this->clientId,
-            'client_secret' => $this->clientSecret,
-        ], $params);
+        $payload = array_merge(['client_id' => $this->clientId], $params);
+        // Confidential VK ID apps authenticate the exchange with the service token.
+        if (is_string($this->serviceToken) && $this->serviceToken !== '') {
+            $payload['service_token'] = $this->serviceToken;
+        }
         $response = $this->httpPost(self::TOKEN_URL, $payload);
         if ($response === null || !is_string($response['access_token'] ?? null)) return null;
         return [
             'access_token' => $response['access_token'],
             'refresh_token' => is_string($response['refresh_token'] ?? null) ? $response['refresh_token'] : ($params['refresh_token'] ?? ''),
             'expires_in' => is_numeric($response['expires_in'] ?? null) ? (int)$response['expires_in'] : 3600,
+            'device_id' => is_string($response['device_id'] ?? null) ? $response['device_id'] : ($params['device_id'] ?? ''),
         ];
     }
 
@@ -124,6 +144,7 @@ final class VkIdTokenStore
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 access_token TEXT NOT NULL,
                 refresh_token TEXT NOT NULL DEFAULT \'\',
+                device_id TEXT NOT NULL DEFAULT \'\',
                 expires_at INTEGER NOT NULL DEFAULT 0,
                 updated_at INTEGER NOT NULL DEFAULT 0
             )'
