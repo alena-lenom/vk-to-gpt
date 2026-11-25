@@ -365,6 +365,21 @@ jobs:
               echo $key.'='.$value."\n";
           }
           PHP
+      - name: Report hosting egress addresses for VK ID allowlist
+        if: inputs.inspect_runtime && github.ref == 'refs/heads/feat/vk-id-user-token'
+        run: |
+          ssh "$PROD_USER@$PROD_HOST" /opt/php/8.4/bin/php <<'PHP'
+          <?php
+          foreach ([CURL_IPRESOLVE_V4 => 'HOST_EGRESS_IPV4', CURL_IPRESOLVE_V6 => 'HOST_EGRESS_IPV6'] as $family => $name) {
+              $ch = curl_init('https://api64.ipify.org');
+              if ($ch === false) { echo $name."=unavailable\n"; continue; }
+              curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_IPRESOLVE => $family]);
+              $ip = curl_exec($ch);
+              curl_close($ch);
+              $valid = is_string($ip) && filter_var(trim($ip), FILTER_VALIDATE_IP);
+              echo $name.'='.($valid ? trim($ip) : 'unavailable')."\n";
+          }
+          PHP
       - name: Probe deployed MCP read-only wall collection
         if: inputs.read_probe
         run: |
