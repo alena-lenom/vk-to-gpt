@@ -11,8 +11,11 @@ require dirname(__DIR__).'/php/VkIdTokenStore.php';
 
 /**
  * Minimal VK ID OAuth user flow (no SDK, backend code exchange):
- *   /vkid?action=start    -> redirect to https://id.vk.ru/authorize (PKCE + state)
- *   /vkid?action=callback -> exchange code for tokens, store pair, show result
+ *   /vkid                 -> start (redirect to https://id.vk.ru/authorize, PKCE + state)
+ *   /vkid?code=...        -> callback (VK returns here; exchange code, store tokens)
+ *
+ * The redirect_uri must EXACTLY match the app's trusted redirect URL in the VK ID
+ * console (scheme + host + path, case-sensitive), so no action= parameter is used.
  *
  * Environment (see .env.example):
  *   VK_ID_CLIENT_ID     - numeric "ID приложения" from the VK ID console
@@ -62,7 +65,7 @@ function page(string $title, string $body): never
     exit;
 }
 
-$action = (string)($_GET['action'] ?? 'start');
+$action = (string)($_GET['action'] ?? (isset($_GET['code']) ? 'callback' : 'start'));
 
 if ($action === 'start') {
     $clientId = envOrFail('VK_ID_CLIENT_ID');
@@ -76,7 +79,7 @@ if ($action === 'start') {
     file_put_contents($sessionFile, json_encode(['verifier' => $verifier, 'expires' => time() + 600]), LOCK_EX);
     @chmod($sessionFile, 0600);
 
-    $redirectUri = baseUrl().'/vkid?action=callback';
+    $redirectUri = baseUrl().'/vkid';
     $query = http_build_query([
         'response_type' => 'code',
         'client_id' => $clientId,
@@ -98,7 +101,7 @@ if ($action === 'callback') {
     $session = is_file($sessionFile) ? json_decode((string)file_get_contents($sessionFile), true) : null;
     @unlink($sessionFile);
     if (!is_array($session) || ($session['expires'] ?? 0) < time() || $code === '') {
-        page('VK ID', '<h2>Ошибка</h2><p>Сессия авторизации истекла или код отсутствует. Повторите начало авторизации.</p>');
+        page('VK ID', '<h2>Ошибка</h2><p>Сессия авторизации истекла или код отсутствует. Начните заново: откройте /vkid.</p>');
     }
     $result = store()->exchange([
         'grant_type' => 'authorization_code',
@@ -107,7 +110,7 @@ if ($action === 'callback') {
         'device_id' => $deviceId,
     ]);
     if ($result === null) {
-        page('VK ID', '<h2>Ошибка обмена кода</h2><p>VK ID не выдал токен. Проверьте сервисный ключ, статус приложения (конфиденциальное) и права доступа к API, затем повторите.</p>');
+        page('VK ID', '<h2>Ошибка обмена кода</h2><p>VK ID не выдал токен. Проверьте сервисный ключ, уровень конфиденциальности приложения и IP-адрес сервера в настройках, затем повторите.</p>');
     }
     store()->saveToken(
         (string)$result['access_token'],
