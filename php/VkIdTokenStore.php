@@ -19,6 +19,9 @@ final class VkIdTokenStore
     private const TABLE = 'vkid_tokens';
     private const TOKEN_URL = 'https://id.vk.ru/oauth2/auth';
 
+    /** Details of the last failed exchange (VK error body), for server-side logs only. */
+    private ?string $lastError = null;
+
     public function __construct(
         private readonly string $dbPath,
         private readonly ?string $clientId,
@@ -28,6 +31,16 @@ final class VkIdTokenStore
     public function hasCredentials(): bool
     {
         return $this->clientId !== null && $this->clientId !== '';
+    }
+
+    public function hasServiceToken(): bool
+    {
+        return $this->serviceToken !== null && $this->serviceToken !== '';
+    }
+
+    public function lastError(): ?string
+    {
+        return $this->lastError;
     }
 
     public function saveToken(string $accessToken, string $refreshToken, int $expiresIn, string $deviceId = ''): void
@@ -100,14 +113,25 @@ final class VkIdTokenStore
      */
     public function exchange(array $params): ?array
     {
+        $this->lastError = null;
         if (!$this->hasCredentials()) return null;
         $payload = array_merge(['client_id' => $this->clientId], $params);
         // Confidential VK ID apps authenticate the exchange with the service token.
-        if (is_string($this->serviceToken) && $this->serviceToken !== '') {
+        if ($this->hasServiceToken()) {
             $payload['service_token'] = $this->serviceToken;
         }
         $response = $this->httpPost(self::TOKEN_URL, $payload);
-        if ($response === null || !is_string($response['access_token'] ?? null)) return null;
+        if ($response === null) return null;
+        if (!is_string($response['access_token'] ?? null)) {
+            $error = is_string($response['error'] ?? null) ? $response['error'] : 'unknown';
+            $description = is_string($response['error_description'] ?? null) ? $response['error_description'] : '';
+            $hint = is_string($response['error_hint'] ?? null) ? $response['error_hint'] : '';
+            $this->lastError = json_encode(
+                ['error' => $error, 'error_description' => $description, 'error_hint' => $hint],
+                JSON_UNESCAPED_UNICODE,
+            );
+            return null;
+        }
         return [
             'access_token' => $response['access_token'],
             'refresh_token' => is_string($response['refresh_token'] ?? null) ? $response['refresh_token'] : ($params['refresh_token'] ?? ''),
@@ -130,9 +154,20 @@ final class VkIdTokenStore
         $body = curl_exec($ch);
         $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         curl_close($ch);
-        if (!is_string($body) || $body === '' || $status < 200 || $status >= 300) return null;
+        if (!is_string($body) || $body === '') {
+            $this->lastError = json_encode(['transport' => 'empty or failed response', 'http_code' => $status]);
+            return null;
+        }
         $decoded = json_decode($body, true);
-        return is_array($decoded) ? $decoded : null;
+        if (!is_array($decoded)) {
+            $this->lastError = json_encode(['transport' => 'non-JSON body', 'http_code' => $status]);
+            return null;
+        }
+        if ($status < 200 || $status >= 300) {
+            // Caller inspects decoded error fields via exchange().
+            return $decoded;
+        }
+        return $decoded;
     }
 
     private function pdo(): \PDO
