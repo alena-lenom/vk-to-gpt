@@ -103,16 +103,22 @@ if ($action === 'callback') {
     if (!is_array($session) || ($session['expires'] ?? 0) < time() || $code === '') {
         page('VK ID', '<h2>Ошибка</h2><p>Сессия авторизации истекла или код отсутствует. Начните заново: откройте /vkid.</p>');
     }
-    $result = store()->exchange([
+    $vkidStore = store();
+    $result = $vkidStore->exchange([
         'grant_type' => 'authorization_code',
         'code' => $code,
         'code_verifier' => (string)$session['verifier'],
         'device_id' => $deviceId,
     ]);
     if ($result === null) {
-        page('VK ID', '<h2>Ошибка обмена кода</h2><p>VK ID не выдал токен. Проверьте сервисный ключ, уровень конфиденциальности приложения и IP-адрес сервера в настройках, затем повторите.</p>');
+        // Server-side diagnostics: exact VK error goes to a log next to OAuth sessions.
+        $logLine = date('c').' '.($vkidStore->lastError() ?? '{"error":"unknown"}')."\n";
+        @file_put_contents(sessionDir().'/vkid_last_error.log', $logLine, FILE_APPEND | LOCK_EX);
+        $serviceHint = $vkidStore->hasServiceToken() ? '' : '<p><b>VK_ID_SERVICE_TOKEN пуст</b> — без него обмен кода для конфиденциального приложения не пройдёт.</p>';
+        page('VK ID', '<h2>Ошибка обмена кода</h2>'.$serviceHint
+            .'<p>VK ID не выдал токен. Проверьте: уровень конфиденциальности приложения, поле «IP-адрес сервера» в настройках приложения (должен быть внешний IP хостинга), сервисный ключ в config.php. Детали — в vkid_last_error.log рядом с OAuth-сессиями.</p>');
     }
-    store()->saveToken(
+    $vkidStore->saveToken(
         (string)$result['access_token'],
         (string)$result['refresh_token'],
         (int)$result['expires_in'],
