@@ -425,6 +425,15 @@ jobs:
               echo 'event_directory_writable='.($ready && is_writable($root) ? 'yes' : 'no')."\n";
               echo 'mcp_wrapper_exists='.(is_file($webroot.'/mcp.php') ? 'yes' : 'no')."\n";
               echo 'mcp_wrapper_readable='.(is_readable($webroot.'/mcp.php') ? 'yes' : 'no')."\n";
+              // Read-only code-shape check; never display source or event contents.
+              $callbackFile = $webroot.'/callback.php';
+              $callbackSource = is_file($callbackFile) && !is_link($callbackFile)
+                  && is_readable($callbackFile) ? file_get_contents($callbackFile) : false;
+              $noClobber = is_string($callbackSource)
+                  && str_contains($callbackSource, '@tempnam($root,')
+                  && str_contains($callbackSource, '@link($temporary, $target)')
+                  && str_contains($callbackSource, '@unlink($temporary)');
+              echo 'callback_atomic_no_clobber_installed='.($noClobber ? 'yes' : 'no')."\n";
               foreach ($files as $label => [$path, $needle]) {
                   $source = is_file($path) && is_readable($path) ? file_get_contents($path) : false;
                   echo $label.'='.(is_string($source) && str_contains($source, $needle) ? 'yes' : 'no')."\n";
