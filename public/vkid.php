@@ -5,7 +5,7 @@ namespace VkToGpt;
 
 ini_set('display_errors', '0');
 header('Cache-Control: no-store');
-header('X-Content-Type-Options: ');
+header('X-Content-Type-Options: nosniff');
 
 require dirname(__DIR__).'/php/VkIdTokenStore.php';
 
