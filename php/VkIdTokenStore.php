@@ -10,7 +10,7 @@ namespace VkToGpt;
  * VK ID scheme (no SDK, backend exchange):
  *   authorize: GET  https://id.vk.ru/authorize?response_type=code&...
  *   exchange:  POST https://id.vk.ru/oauth2/auth (grant_type=authorization_code,
- *              code, code_verifier, device_id, service_token for confidential apps)
+ *              code, code_verifier, device_id, redirect_uri, service_token for confidential apps)
  *
  * Secrets never leave this class: callers receive only the current access token.
  */
